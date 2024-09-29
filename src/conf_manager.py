@@ -11,7 +11,7 @@ class Cfg:
                  make_dirs: bool = True, disable_log: bool = False,
                  quiet: bool = False, dry_run: bool = False,
                  gui: bool = True, preserve_order: bool = False,
-                 max_attempts: int = 3) -> None:
+                 max_attempts: int = 3, run_pp: bool = False) -> None:
         self.naming_convention = naming_convention
         self.directory = directory
         self.create_pl_folder = create_pl_folder
@@ -22,6 +22,7 @@ class Cfg:
         self.gui = gui
         self.pre_order = preserve_order
         self.max_attempts = max_attempts
+        self.run_pp = run_pp
 
     def print(self):
         print(f"create_pl_folder: {self.create_pl_folder}")
@@ -34,3 +35,4 @@ class Cfg:
         print(f"gui: {self.gui}")
         print(f"pre_order: {self.pre_order}")
         print(f"max_attempts: {self.max_attempts}")
+        print(f"run_pp: {self.run_pp}")

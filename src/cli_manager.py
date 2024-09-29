@@ -1,5 +1,6 @@
 import os
 import argparse
+from tabulate import tabulate
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -31,4 +32,10 @@ def parse_arguments() -> argparse.Namespace:
                         help='Disable GUI (default: False).')
     parser.add_argument('--pre-order', action='store_true', dest='pre_order',
                         help='Preserve order (default: False).')
+    parser.add_argument('--run-pp', action='store_true', dest='run_pp',
+                        help='Run post-processing (default: False).')
     return parser.parse_args()
+
+def print_tabulated_result(result_dict: dict) -> None:
+    print(tabulate(result_dict.items(), tablefmt='pretty', stralign='left',
+          headers=['track', 'status']))

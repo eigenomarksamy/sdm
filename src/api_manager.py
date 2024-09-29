@@ -27,7 +27,7 @@ class SpotifyDownloadManager:
     'Origin': 'https://spotifydown.com',
     }
     DOWNLOAD_API = "https://api.spotifydown.com/download/"
-    TRACK_NAME_REGEX = re.compile(r"[<>:\"\/\\|?*]")
+    TRACK_NAME_REGEX = re.compile(r"[<>:\"/\\|?*\x00-\x1F\x7F\u2000-\u206F\u2190-\u21FF\u2600-\u26FF]")
 
     def __init__(self, naming_convention: Cfg.NamingConventions,
                  output_directory: os.PathLike) -> None:
@@ -38,12 +38,21 @@ def check_existing_tracks(song_list_dict: dict,
                           output_directory: os.PathLike) -> dict:
     return check_existing_files(song_list_dict, output_directory, "mp3")
 
+def sanitize_track_id(track_id: str) -> str:
+    track_id = re.sub(r'[<>:"/\\|?*]', '', track_id)
+    return track_id
+
 def get_track_info(link: str) -> any:
     track_id = link.split("/")[-1].split("?")[0]
+    track_id = sanitize_track_id(track_id)
+    track_id = urllib.parse.quote(track_id)
     response = requests.get(f"{SpotifyDownloadManager.DOWNLOAD_API}{track_id}",
                             headers=SpotifyDownloadManager.CUSTOM_HEADER)
-    response = response.json()
-    return response
+    if response.status_code != 200:
+        print(f"HTTP Response Code: {response.status_code}")
+        return {'success': False, 'message': f"HTTP {response.status_code}: Error occurred"}
+    response_json = response.json()
+    return response_json
 
 def create_unique_dict(song_list: list[Song], tnc: Cfg.NamingConventions) -> Tuple[dict, list]:
     unique_songs = {}
@@ -113,7 +122,7 @@ def save_audio(track_name: str, link, output_path: os.PathLike) -> bool:
                     "Skipping download!")
         print("\t This track already exists in the directory. Skipping download!")
         return False
-    audio_response = requests.get(link)
+    audio_response = requests.get(link, timeout=10)
     if audio_response.status_code == 200:
         with open(os.path.join(output_path, f"{track_name}.mp3"), "wb") as file:
             file.write(audio_response.content)
@@ -146,7 +155,8 @@ def add_metadata(track_name: str, cover_art: bytes,
         )
     audio.save(filepath, v2_version=3, v1=2)
 
-def download_track(track_link: str, cfg: Cfg) -> None:
+def download_track(track_link: str, cfg: Cfg) -> bool:
+    ret_flag = True
     if not cfg.quiet:
         print("\nTrack link identified")
     resp = get_track_info(track_link)
@@ -157,13 +167,14 @@ def download_track(track_link: str, cfg: Cfg) -> None:
             logging.error(f"Error: {resp['message']}")
         ret = {'status': 1,
                'details': f"Error: {resp['message']}"}
-        return ret
+        return False
     track_name = f"{resp['metadata']['title']} - {resp['metadata']['artists']}"
     if cfg.naming_convention == Cfg.NamingConventions.ARTIST_TRACK:
         track_name = f"{resp['metadata']['artists']} - {resp['metadata']['title']}"
     if not cfg.quiet:
         print(f"\nDownloading {track_name} to ({cfg.directory})")
     for attempt in range(cfg.max_attempts):
+        ret_flag = True
         try:
             save_status = save_audio(track_name, resp['link'], cfg.directory)
             if save_status:
@@ -177,9 +188,12 @@ def download_track(track_link: str, cfg: Cfg) -> None:
                 print(f"\tAttempt {attempt+1} failed with error: ", e)
                 ret = {'status': 1,
                        'details': f"Attempt {attempt+1} - {track_name} --> {e}"}
+            ret_flag = False
     remove_empty_files(cfg.directory)
+    return ret_flag
 
-def download_playlist_tracks(playlist_link: str, cfg: Cfg) -> None:
+def download_playlist_tracks(playlist_link: str, cfg: Cfg) -> dict:
+    ret_dict = {}
     print("\nPlaylist link identified")
     song_list_dict, playlist_name = get_playlist_info(playlist_link,
                                                       cfg.naming_convention)
@@ -203,6 +217,7 @@ def download_playlist_tracks(playlist_link: str, cfg: Cfg) -> None:
           f"from {playlist_name} to ({output_path})")
     print("-" * 40 )
     for index, tn in enumerate(song_list_dict.keys(), 1):
-        download_track(song_list_dict[tn].link, cfg)
-        print(f"{index}/{len(song_list_dict)}: {tn}")
+        ret_dict[tn] = download_track(song_list_dict[tn].link, cfg)
+        print(f"{index}/{len(song_list_dict)}: {tn} -- Status: {ret_dict[tn]}")
     remove_empty_files(output_path)
+    return ret_dict

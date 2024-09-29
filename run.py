@@ -3,7 +3,7 @@ import sys
 import logging
 from argparse import Namespace
 from src.conf_manager import Cfg
-from src.cli_manager import parse_arguments
+from src.cli_manager import parse_arguments, print_tabulated_result
 from src.dir_manager import resolve_path
 from src.api_manager import download_track, download_playlist_tracks
 
@@ -11,9 +11,13 @@ def execute(cfg: Cfg, links: list[str]) -> int:
     for link in links:
         ret = resolve_path(cfg.directory, cfg.create_pl_folder, cfg.make_dirs)
         if re.search(r".*spotify\.com\/track\/", link):
-            download_track(link, cfg)
+            downloaded = download_track(link, cfg)
+            if not cfg.quiet:
+                print(downloaded)
         elif re.search(r".*spotify\.com\/playlist\/", link):
-            download_playlist_tracks(link, cfg)
+            downloaded = download_playlist_tracks(link, cfg)
+            if not cfg.quiet:
+                print_tabulated_result(downloaded)
         else:
             if not cfg.disable_log:
                 logging.error(f"{link} is not a valid Spotify "

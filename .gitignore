@@ -2,3 +2,4 @@
 *.log
 sync*.json
 .venv
+*.pyc
