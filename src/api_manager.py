@@ -71,15 +71,26 @@ def make_unique_song_objects(track_list: list[dict],
                              tn_con: Cfg.NamingConventions) -> dict:
     song_list = []
     for track in track_list:
-        song_list.append(
-            Song(
-                title=re.sub(SpotifyDownloadManager.TRACK_NAME_REGEX, "_", track['title']),
-                artists=re.sub(SpotifyDownloadManager.TRACK_NAME_REGEX, "_", track['artists']),
-                album=track['album'],
-                cover=track['cover'],
-                link=f"https://open.spotify.com/track/{track['id']}"
+        if 'cover' in track:
+            song_list.append(
+                Song(
+                    title=re.sub(SpotifyDownloadManager.TRACK_NAME_REGEX, "_", track['title']),
+                    artists=re.sub(SpotifyDownloadManager.TRACK_NAME_REGEX, "_", track['artists']),
+                    album=track['album'],
+                    cover=track['cover'],
+                    link=f"https://open.spotify.com/track/{track['id']}"
+                )
             )
-        )
+        else:
+            song_list.append(
+                Song(
+                    title=re.sub(SpotifyDownloadManager.TRACK_NAME_REGEX, "_", track['title']),
+                    artists=re.sub(SpotifyDownloadManager.TRACK_NAME_REGEX, "_", track['artists']),
+                    album=track['album'],
+                    cover=None,
+                    link=f"https://open.spotify.com/track/{track['id']}"
+                )
+            )
     unique_songs, duplicate_songs = create_unique_dict(song_list, tn_con)
     if (len(duplicate_songs)):
         print("\tDuplicate songs: ", len(duplicate_songs))
