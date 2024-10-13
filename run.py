@@ -2,10 +2,10 @@ import re
 import sys
 import logging
 from argparse import Namespace
-from src.conf_manager import Cfg
-from src.cli_manager import parse_arguments, print_tabulated_result
-from src.dir_manager import resolve_path
-from src.api_manager import download_track, download_playlist_tracks
+from src.cfg_mngr import Cfg
+from src.cli_mngr import parse_arguments, print_tabulated_result
+from src.dir_mngr import resolve_path
+from src.api_mngr import download_track, download_playlist_tracks
 
 def execute(cfg: Cfg, links: list[str]) -> int:
     for link in links:

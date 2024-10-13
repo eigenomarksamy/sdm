@@ -33,6 +33,3 @@ def compare_and_report(directory):
             data.append([filename, actual_sample_rate, metadata_sample_rate, sample_rate_diff, actual_bitrate, metadata_bitrate, bitrate_diff])
     df = pd.DataFrame(data, columns=['Filename', 'Actual Sample Rate', 'Metadata Sample Rate', 'Sample Rate Diff', 'Actual Bitrate', 'Metadata Bitrate', 'Bitrate Diff'])
     return df
-directory = 'C:\\Users\\omark\\Music\\library\\postmodernism'
-df = compare_and_report(directory)
-print(df)

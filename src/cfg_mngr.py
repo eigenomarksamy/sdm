@@ -6,11 +6,11 @@ class Cfg:
         TRACK_ARTIST = 1
         ARTIST_TRACK = 2
 
-    def __init__(self, naming_convention: NamingConventions,
-                 directory: os.PathLike, create_pl_folder: bool,
+    def __init__(self, directory: os.PathLike, create_pl_folder: bool = True,
                  make_dirs: bool = True, disable_log: bool = False,
                  quiet: bool = False, dry_run: bool = False,
                  gui: bool = True, preserve_order: bool = False,
+                 naming_convention: NamingConventions = NamingConventions.ARTIST_TRACK,
                  max_attempts: int = 3, run_pp: bool = False) -> None:
         self.naming_convention = naming_convention
         self.directory = directory
