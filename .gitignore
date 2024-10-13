@@ -3,3 +3,4 @@
 sync*.json
 .venv
 *.pyc
+__pycache__/
