@@ -3,10 +3,11 @@ import re
 import urllib
 import logging
 import requests
+import eyed3
 from typing import Tuple
 from dataclasses import dataclass
 from mutagen.mp3 import MP3
-from mutagen.id3 import ID3, APIC, error
+from mutagen.id3 import ID3, APIC, error, TPE1
 from src.cfg_mngr import Cfg
 from src.dir_mngr import (check_existing_files, remove_empty_files,
                              resolve_path, get_unique_name_of_folder)
@@ -147,7 +148,7 @@ def add_metadata(track_name: str, cover_art: bytes,
         audio = MP3(filepath, ID3=ID3)
     except error as e:
         logging.error(f"Error loading MP3 file from {filepath} --> {e}")
-        print(f"\t Error loading MP3 file --> {e}")
+        print(f"\tError loading MP3 file --> {e}")
         return
     if audio.tags is None:
         try:
@@ -155,15 +156,22 @@ def add_metadata(track_name: str, cover_art: bytes,
         except error as e:
             logging.error(f"Error adding ID3 tags to {filepath} --> {e}")
             print(f"\tError adding ID3 tags --> {e}")
-            return 
+            return
+    if ' - ' in track_name:
+        artist_name, _ = track_name.split(' - ', 1)
+    else:
+        artist_name = "Unknown Artist"
+    if audio.tags.get('TPE1') is None or audio.tags['TPE1'].text[0] == "Release":
+        audio.tags.add(TPE1(encoding=3, text=artist_name))
     audio.tags.add(
         APIC(
             encoding=1,
             mime='image/jpeg',
             type=3,
             desc=u'Cover',
-            data=cover_art)
+            data=cover_art
         )
+    )
     audio.save(filepath, v2_version=3, v1=2)
 
 def download_track(track_link: str, cfg: Cfg) -> bool:

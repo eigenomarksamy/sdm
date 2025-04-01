@@ -24,15 +24,6 @@ class Cfg:
         self.max_attempts = max_attempts
         self.run_pp = run_pp
 
-    def print(self):
-        print(f"create_pl_folder: {self.create_pl_folder}")
-        print(f"directory: {self.directory}")
-        print(f"make_dirs: {self.make_dirs}")
-        print(f"disable_log: {self.disable_log}")
-        print(f"naming_convention: {self.naming_convention}")
-        print(f"quiet: {self.quiet}")
-        print(f"dry_run: {self.dry_run}")
-        print(f"gui: {self.gui}")
-        print(f"pre_order: {self.pre_order}")
-        print(f"max_attempts: {self.max_attempts}")
-        print(f"run_pp: {self.run_pp}")
+def print(obj) -> None:
+    attrs = vars(obj)
+    print(', '.join("%s: %s" % item for item in attrs.items()))
