@@ -7,3 +7,5 @@ __pycache__/
 .vscode/
 deprecated/
 tmp/
+out/
+*.csv

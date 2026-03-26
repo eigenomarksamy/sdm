@@ -4,6 +4,8 @@ import argparse
 import eyed3
 import datetime
 
+FOLDER_NAME = "sagittarius"
+
 def format_duration(seconds):
     if isinstance(seconds, (int, float)):
         minutes = int(seconds) // 60
@@ -11,10 +13,11 @@ def format_duration(seconds):
         return f"{minutes:02}:{seconds:02}"
     return "Unknown"
 
-def list_mp3_files(directory, output_csv):
+def list_mp3_files(directory=f'C:\\Users\\omark\\Music\\library\\v1\\prprc\\{FOLDER_NAME}', output_csv=f'./mp3_file_list_{FOLDER_NAME}.csv'):
     with open(output_csv, mode='w', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
-        writer.writerow(["#", "File Path", "File Name", "Size (MBs)", "Last Modified", "Title", "Artist", "Duration (mm:ss)", "Genre"])
+        # writer.writerow(["#", "File Path", "File Name", "Size (MBs)", "Last Modified", "Title", "Artist", "Duration (mm:ss)", "Genre"])
+        writer.writerow(["track name", "artist"])
         count = 0
         for root, _, files in os.walk(directory):
             for filename in files:
@@ -31,13 +34,15 @@ def list_mp3_files(directory, output_csv):
                         title, artist, genre = "Unknown", "Unknown", "Unknown"
                     duration = format_duration(audiofile.info.time_secs) if audiofile and audiofile.info and audiofile.info.time_secs else "Unknown"
                     count += 1
-                    writer.writerow([count, filepath, filename, size, last_modified, title, artist, duration, genre])
+                    # writer.writerow([count, filepath, filename, size, last_modified, title, artist, duration, genre])
+                    writer.writerow([title, artist])
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="List all MP3 files in a directory and its subdirectories in a CSV file with metadata.")
-    parser.add_argument("directory", help="Path to the directory")
-    parser.add_argument("output_csv", help="Output CSV file name")
-    args = parser.parse_args()
+    # parser = argparse.ArgumentParser(description="List all MP3 files in a directory and its subdirectories in a CSV file with metadata.")
+    # parser.add_argument("directory", help="Path to the directory")
+    # parser.add_argument("output_csv", help="Output CSV file name")
+    # args = parser.parse_args()
     
-    list_mp3_files(args.directory, args.output_csv)
-    print(f"MP3 file list saved to {args.output_csv}")
+    # list_mp3_files(args.directory, args.output_csv)
+    list_mp3_files()
+    print("MP3 file list saved.")

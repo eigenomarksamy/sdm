@@ -23,11 +23,11 @@ class Song:
 class SpotifyDownloadManager:
 
     CUSTOM_HEADER = {
-    'Host': 'api.spotifydown.com',
-    'Referer': 'https://spotifydown.com/',
-    'Origin': 'https://spotifydown.com',
+    'Host': 'api.spotidownloader.com',
+    'Referer': 'https://spotidownloader.com/',
+    'Origin': 'https://spotidownloader.com',
     }
-    DOWNLOAD_API = "https://api.spotifydown.com/download/"
+    DOWNLOAD_API = "https://api.spotidownloader.com/download/"
     TRACK_NAME_REGEX = re.compile(r"[<>:\"/\\|?*\x00-\x1F\x7F\u2000-\u206F\u2190-\u21FF\u2600-\u26FF]")
 
     def __init__(self, naming_convention: Cfg.NamingConventions,
