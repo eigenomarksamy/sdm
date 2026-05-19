@@ -1,6 +1,11 @@
+import argparse
 import os
 import csv
 import eyed3
+import csv
+import re
+import unicodedata
+from collections import defaultdict
 
 
 def list_mp3_files(
@@ -34,7 +39,7 @@ def list_mp3_files(
                 })
 
             rows.append({
-                "filepath": filepath,
+                # "filepath": filepath,
                 "filename": filename,
                 "title": title,
                 "artist": artist
@@ -42,12 +47,16 @@ def list_mp3_files(
 
     with open(output_csv, mode="w", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
-        writer.writerow(["#", "filepath", "filename", "track name", "artist"])
+        writer.writerow(["#",
+                        #  "filepath",
+                         "filename",
+                         "track name",
+                         "artist"])
 
         for index, row in enumerate(rows, start=1):
             writer.writerow([
                 index,
-                row["filepath"],
+                # row["filepath"],
                 row["filename"],
                 row["title"],
                 row["artist"]
@@ -105,14 +114,99 @@ def validate_mp3_csv(directory, csv_path):
 
     return result
 
-FOLDER_NAME = "postmodern"
+def find_repeated(csv_path):
+    MIX_SUFFIXES = [
+        "original mix",
+        # add more later if needed:
+        # "extended mix",
+        # "club mix",
+        # "radio edit",
+        # "dub mix",
+    ]
 
-directory = fr"C:\Users\omark\Music\{FOLDER_NAME}"
-output_csv = f"./mp3_file_list_{FOLDER_NAME}.csv"
+
+    def normalize_text(value):
+        value = value or ""
+        value = unicodedata.normalize("NFKC", value)
+        value = value.casefold()
+        value = re.sub(r"\s+", " ", value)
+        return value.strip()
+
+
+    def normalize_title(title):
+        title = normalize_text(title)
+
+        suffix_pattern = "|".join(re.escape(suffix) for suffix in MIX_SUFFIXES)
+
+        patterns = [
+            # Track Name (Original Mix)
+            rf"\s*[\(\[\{{]\s*({suffix_pattern})\s*[\)\]\}}]\s*$",
+
+            # Track Name - Original Mix
+            rf"\s*[-–—]\s*({suffix_pattern})\s*$",
+        ]
+
+        changed = True
+        while changed:
+            old_title = title
+
+            for pattern in patterns:
+                title = re.sub(pattern, "", title, flags=re.IGNORECASE)
+
+            title = re.sub(r"\s+", " ", title).strip()
+
+            changed = title != old_title
+
+        return title
+
+
+    def make_track_key(row):
+        title = normalize_title(row.get("track name", ""))
+        artist = normalize_text(row.get("artist", ""))
+
+        return title, artist
+
+    seen = {}
+    duplicates = defaultdict(list)
+
+    with open(csv_path, mode="r", newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+
+        for line_number, row in enumerate(reader, start=2):
+            key = make_track_key(row)
+
+            entry = {
+                "line": line_number,
+                "track name": row.get("track name", ""),
+                "artist": row.get("artist", ""),
+                "normalized key": key,
+            }
+
+            if key in seen:
+                if not duplicates[key]:
+                    duplicates[key].append(seen[key])
+
+                duplicates[key].append(entry)
+            else:
+                seen[key] = entry
+
+    return dict(duplicates)
+
+parser = argparse.ArgumentParser()
+parser.add_argument("directory")
+parser.add_argument("--output-csv", default=None)
+args = parser.parse_args()
+
+directory = args.directory
+folder_name = os.path.basename(os.path.normpath(directory))
+output_csv = args.output_csv or f"./mp3_file_list_{folder_name}.csv"
 
 export_result = list_mp3_files(directory, output_csv)
+find_repeated_result = find_repeated(output_csv)
 
-validation = validate_mp3_csv(directory, output_csv)
+# validation = validate_mp3_csv(directory, output_csv)
 
 print(export_result)
-print(validation)
+for i in find_repeated_result:
+    print(i)
+# print(validation)
