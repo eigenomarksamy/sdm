@@ -207,6 +207,9 @@ find_repeated_result = find_repeated(output_csv)
 # validation = validate_mp3_csv(directory, output_csv)
 
 print(export_result)
-for i in find_repeated_result:
-    print(i)
+if len(find_repeated_result) == 0:
+    print("No potential duplicates found.")
+else:
+    for i in find_repeated_result:
+        print(i)
 # print(validation)
