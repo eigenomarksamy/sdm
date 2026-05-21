@@ -9,3 +9,4 @@ deprecated/
 tmp/
 out/
 *.csv
+*.txt

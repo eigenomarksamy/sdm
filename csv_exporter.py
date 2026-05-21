@@ -1,17 +1,19 @@
-import argparse
+import re
 import os
 import csv
 import eyed3
-import csv
-import re
+import argparse
 import unicodedata
 from collections import defaultdict
 
 
 def list_mp3_files(
     directory,
-    output_csv
+    output_csv,
+    x_val_path
 ):
+
+    rows_x_val = []
     rows = []
     errors = []
 
@@ -39,16 +41,16 @@ def list_mp3_files(
                 })
 
             rows.append({
-                # "filepath": filepath,
                 "filename": filename,
                 "title": title,
                 "artist": artist
             })
 
+            rows_x_val.append({"filepath": filepath})
+
     with open(output_csv, mode="w", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
         writer.writerow(["#",
-                        #  "filepath",
                          "filename",
                          "track name",
                          "artist"])
@@ -56,11 +58,14 @@ def list_mp3_files(
         for index, row in enumerate(rows, start=1):
             writer.writerow([
                 index,
-                # row["filepath"],
                 row["filename"],
                 row["title"],
                 row["artist"]
             ])
+
+    with open(x_val_path, mode="w", newline="", encoding="utf-8") as file:
+        for row in rows_x_val:
+            file.write(f"{row['filepath']}\n")
 
     return {
         "tracks_written": len(rows),
@@ -68,7 +73,7 @@ def list_mp3_files(
     }
 
 
-def validate_mp3_csv(directory, csv_path):
+def validate_mp3_csv(directory, txt_path):
     # All actual MP3 files in the directory
     actual_files = set()
 
@@ -81,17 +86,15 @@ def validate_mp3_csv(directory, csv_path):
     # All MP3 files recorded in the CSV
     csv_files = set()
     duplicate_csv_entries = []
+    files_from_txt = []
 
-    with open(csv_path, mode="r", newline="", encoding="utf-8") as file:
-        reader = csv.DictReader(file)
+    with open(txt_path, "r", encoding="utf-8") as file:
+        files_from_txt = [line.rstrip("\n") for line in file]
 
-        for row in reader:
-            filepath = os.path.abspath(row["filepath"])
-
-            if filepath in csv_files:
-                duplicate_csv_entries.append(filepath)
-
-            csv_files.add(filepath)
+    for filepath in files_from_txt:
+        if filepath in csv_files:
+            duplicate_csv_entries.append(filepath)
+        csv_files.add(filepath)
 
     missing_from_csv = actual_files - csv_files
     extra_in_csv = csv_files - actual_files
@@ -200,11 +203,12 @@ args = parser.parse_args()
 directory = args.directory
 folder_name = os.path.basename(os.path.normpath(directory))
 output_csv = args.output_csv or f"./mp3_file_list_{folder_name}.csv"
+x_val_path = os.path.splitext(output_csv)[0] + "_x_val.txt"
 
-export_result = list_mp3_files(directory, output_csv)
+export_result = list_mp3_files(directory, output_csv, x_val_path)
 find_repeated_result = find_repeated(output_csv)
 
-# validation = validate_mp3_csv(directory, output_csv)
+validation = validate_mp3_csv(directory, x_val_path)
 
 print(export_result)
 if len(find_repeated_result) == 0:
@@ -212,4 +216,4 @@ if len(find_repeated_result) == 0:
 else:
     for i in find_repeated_result:
         print(i)
-# print(validation)
+print(validation)
