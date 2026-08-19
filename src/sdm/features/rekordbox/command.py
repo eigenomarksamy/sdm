@@ -7,6 +7,7 @@ import sys
 from dataclasses import asdict
 from typing import Optional
 
+from sdm.core.paths import out_dir, resolve_output
 from sdm.core.report import ensure_dir, write_csv, write_json
 from sdm.features.rekordbox.duplicates import (
     DetectionConfig,
@@ -33,10 +34,12 @@ def run(args: argparse.Namespace) -> int:
         return 1
     print(f"loaded {len(tracks)} track(s)")
 
-    # Export mode: write CSV and exit
-    if args.export_csv:
-        _export_csv(args.export_csv, tracks)
-        print(f"wrote {args.export_csv}")
+    # Export mode: write CSV and exit. `""` is the bare `--export-csv` flag,
+    # which means "the default name"; `None` means the flag was not given.
+    if args.export_csv is not None:
+        export_path = resolve_output(args.export_csv or None, "rekordbox", "tracks.csv")
+        _export_csv(export_path, tracks)
+        print(f"wrote {export_path}")
         return 0
 
     if args.duplicates_by_name:
@@ -62,9 +65,9 @@ def run(args: argparse.Namespace) -> int:
 
     print(f"found {len(groups)} duplicate group(s)")
 
-    ensure_dir(args.output_dir)
-    csv_path = os.path.join(args.output_dir, "duplicates.csv")
-    json_path = os.path.join(args.output_dir, "duplicates.json")
+    report_dir = ensure_dir(args.output_dir) if args.output_dir else out_dir("rekordbox")
+    csv_path = os.path.join(report_dir, "duplicates.csv")
+    json_path = os.path.join(report_dir, "duplicates.json")
     _write_csv(csv_path, groups)
     _write_json(json_path, groups)
     print(f"wrote {csv_path}")

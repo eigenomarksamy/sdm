@@ -5,14 +5,17 @@ import argparse
 import os
 
 
-def add_parser(subparsers) -> argparse.ArgumentParser:
+def add_parser(subparsers, parents=()) -> argparse.ArgumentParser:
     p = subparsers.add_parser(
         "download",
+        parents=list(parents),
         help="Download tracks or playlists from Spotify.",
         description="Download tracks from Spotify, tagged and with cover art.",
     )
     p.add_argument("--link", "-l", nargs="+", dest="link",
                    help="URL of the spotify track or playlist.")
+    # Downloaded audio is the product, not a report, so it stays where the user
+    # points it and is not routed through --out-dir.
     p.add_argument("--output", "-o", nargs="?",
                    default=os.path.join(os.getcwd(), "downloads"),
                    help="Path to save the downloaded track(s).")

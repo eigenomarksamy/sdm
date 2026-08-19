@@ -8,6 +8,7 @@ import csv
 import os
 from collections import defaultdict
 
+from sdm.core.paths import resolve_output
 from sdm.core.report import read_lines, write_csv, write_lines
 from sdm.core.tags import read_basic_tags
 from sdm.core.text import normalize_loose, normalize_text
@@ -150,7 +151,9 @@ def find_repeated(csv_path):
 def run(directory, output_csv=None):
     """Export, then report duplicates, then cross-validate. Returns an exit code."""
     folder_name = os.path.basename(os.path.normpath(directory))
-    output_csv = output_csv or f"./mp3_file_list_{folder_name}.csv"
+    output_csv = resolve_output(output_csv, "catalog", f"mp3_file_list_{folder_name}.csv")
+    # The sidecar stays beside its CSV wherever that ended up — the two are
+    # only meaningful as a pair.
     x_val_path = os.path.splitext(output_csv)[0] + "_x_val.txt"
 
     export_result = list_mp3_files(directory, output_csv, x_val_path)

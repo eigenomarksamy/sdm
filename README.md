@@ -37,6 +37,44 @@ sdm --help
 sdm <command> --help
 ```
 
+## Where output goes
+
+Every generated report lands under one root, in a folder named for the feature
+that produced it:
+
+```text
+./out/
+  catalog/     mp3_file_list_<folder>.csv + _x_val.txt sidecar
+  rekordbox/   duplicates.csv, duplicates.json, tracks.csv
+  quality/     the bitrate report, when --output-csv is given
+  logs/        download.log
+./tmp/         scratch, created and removed within a single run
+```
+
+Both roots are shared by every subcommand and resolve in this order — an
+explicit flag, then the environment, then the default:
+
+| | Flag | Environment | Default |
+| --- | --- | --- | --- |
+| Reports | `--out-dir DIR` | `SDM_OUT_DIR` | `./out` |
+| Scratch | `--tmp-dir DIR` | `SDM_TMP_DIR` | `./tmp` |
+
+```ps1
+sdm catalog --out-dir D:/reports "C:\Users\omark\Music\postmodern"
+```
+
+Per-command output flags still override the default *name*, and how they are
+read depends on their shape: a bare filename lands in the feature's directory,
+while anything with a directory component is taken literally.
+
+```ps1
+sdm quality "F:/Songs" --output-csv report.csv        # -> ./out/quality/report.csv
+sdm quality "F:/Songs" --output-csv D:/audit/q.csv    # -> D:/audit/q.csv
+```
+
+**Downloaded audio is not a report** and is deliberately left out of this. It
+goes wherever `sdm download --output` points, untouched by `--out-dir`.
+
 ---
 
 ## `sdm download`
@@ -71,7 +109,7 @@ zero-byte files left behind by a failed download are cleaned up.
 | `--disable-gui` | off | Run the CLI (required — see above) |
 | `--quiet`, `-q` | off | Suppress console output |
 | `--dry-run`, `-n` | off | Simulate a run |
-| `--disable-log` | off | Suppress logging |
+| `--disable-log` | off | Suppress logging (otherwise `out/logs/download.log`) |
 
 `--sync` and `--run-pp` are accepted by the parser but not yet wired up.
 
@@ -86,7 +124,7 @@ duplicate report, and a proof that the export is complete.
 sdm catalog "C:\Users\omark\Music\postmodern"
 ```
 
-Writes two files:
+Writes two files into `out/catalog/`:
 
 - `mp3_file_list_<folder>.csv` — `#, filename, track name, artist` per track
 - `mp3_file_list_<folder>_x_val.txt` — one raw file path per line
@@ -103,7 +141,7 @@ Then prints:
    `is_valid: True` — the guarantee this feature exists to provide.
 
 Use `--output-csv PATH` to control the destination; the sidecar name is derived
-from it.
+from it, and the two always stay together.
 
 > Pass the folder with **backslashes**. Cross-validation compares the sidecar's
 > paths against normalized absolute paths, so a forward-slash argument makes
@@ -118,15 +156,19 @@ duration — and reports duplicates. **Read-only by design:** it never writes to
 the USB or to the Rekordbox database.
 
 ```ps1
-# export every track's metadata
+# export every track's metadata (bare flag -> out/rekordbox/tracks.csv)
+sdm rekordbox --usb-path D:/ --export-csv
 sdm rekordbox --usb-path D:/ --export-csv library_with_analysis.csv
 
 # duplicates by title + artist (covers every track, needs no analysis data)
-sdm rekordbox --usb-path D:/ --output-dir ./out --duplicates-by-name
+sdm rekordbox --usb-path D:/ --duplicates-by-name
 
 # duplicates by audio fingerprint (default), or --skip-fingerprint for a fast pass
-sdm rekordbox --usb-path D:/ --output-dir ./out
+sdm rekordbox --usb-path D:/
 ```
+
+Reports go to `out/rekordbox/`; `--output-dir DIR` overrides that directory
+alone, without moving the other features' output.
 
 Data comes from, in order: a `master.db` you point at directly, then your
 **local** Rekordbox `master.db` — the only source carrying analyzed BPM and key,
@@ -165,7 +207,8 @@ src/sdm/
     text.py           title/artist normalization (two strictnesses, on purpose)
     tags.py           ID3/Vorbis readers
     grouping.py       union-find, for collapsing pairwise matches into groups
-    report.py         CSV/JSON/sidecar writers
+    report.py         CSV/JSON/sidecar writers — how a file is written
+    paths.py          out/ and tmp/ resolution — where it is written
   features/
     spotify/          sdm download
     catalog/          sdm catalog

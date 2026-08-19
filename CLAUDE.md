@@ -39,9 +39,11 @@ These are the point of the current structure. Breaking either undoes it.
    dependency installed. `pyrekordbox`, `pyacoustid` and `pandas` are extras,
    not base dependencies.
 
-Each feature package exposes `add_parser(subparsers)` and sets
+Each feature package exposes `add_parser(subparsers, parents=())` and sets
 `handler=` via `set_defaults`; `cli.py` dispatches on it and returns its value
-as the exit code.
+as the exit code. `parents` carries the shared `--out-dir`/`--tmp-dir` parser so
+those flags can be typed after the subcommand — pass it straight through to
+`subparsers.add_parser(parents=list(parents))`.
 
 ## Commands
 
@@ -50,7 +52,7 @@ pip install -e ".[all]"       # or .[rekordbox] / .[quality] / bare
 
 sdm download --link "<spotify url>" --output "F:/Songs" --disable-gui
 sdm catalog "C:\Users\omark\Music\postmodern"
-sdm rekordbox --usb-path D:/ --output-dir ./out --duplicates-by-name
+sdm rekordbox --usb-path D:/ --duplicates-by-name
 sdm quality "F:/Songs"
 ```
 
@@ -79,6 +81,19 @@ identical inputs.
   Feature-specific group *construction* stays in the feature.
 - `report.py` — all CSV/JSON/sidecar writers. `newline=""` here is what stops
   the `csv` module writing blank lines between rows on Windows.
+- `paths.py` — the counterpart to `report.py`: `report` decides *how* a file is
+  written, `paths` decides *where*. Two process-global roots, set once by
+  `cli.py` from `--out-dir`/`--tmp-dir` (falling back to `SDM_OUT_DIR`/
+  `SDM_TMP_DIR`, then `./out` and `./tmp`). `out_dir(feature)` gives
+  `out/<feature>/`; `scratch(prefix)` is a context manager yielding a temp dir
+  under `tmp/` that is removed on exit. **Nothing calls `scratch` yet** — no
+  feature currently writes intermediates — it exists so that when one needs to,
+  the scratch stays in the project rather than the system temp directory.
+  `resolve_output(path, feature, default_name)` is the rule every output flag
+  goes through: `None` → the default under `out/<feature>/`, a bare filename →
+  that name under `out/<feature>/`, anything with a directory component → used
+  verbatim. That last case is what keeps `--export-csv D:/x.csv` working, so
+  preserve it. Stdlib only, so `add_parser` may import it.
 
 ## Features
 
@@ -89,6 +104,13 @@ identical inputs.
 with mutagen incl. embedded `APIC` cover art). `paths.py` has path resolution,
 existing-file skipping, empty-file cleanup, and a SHA-256 duplicate finder.
 `gui.py` / `osd.py` are the unwired Tkinter shell.
+
+Downloaded audio is **payload, not a report**, so `--output` is deliberately not
+routed through `core.paths` — it goes where the user points it. What *is* routed
+there is the log: `command.py` now configures the root logger at
+`out/logs/download.log` (unless `--disable-log`), which is what finally gives
+the long-dead `logging.error`/`logging.info` calls in `api.py` and `runner.py`
+somewhere to land.
 
 **Pre-existing bugs — expected, not yours to fix on sight:**
 
@@ -152,6 +174,12 @@ fallback into play and fills them in.
 
 Thin wrapper over `analyzer.compare_and_report`, which shells out to
 `ffprobe`/`ffmpeg`. Returns a pandas DataFrame; the handler prints or writes it.
+
+`--output-csv` requires a value here, while `rekordbox --export-csv` accepts the
+bare flag. That asymmetry is deliberate: this parser has a positional
+`directory`, and an `nargs="?"` flag would swallow it — `sdm quality
+--output-csv F:/Songs` would read the folder as the CSV name and then fail for
+a missing directory. `rekordbox` has no positional, so it is safe there.
 
 ## Conventions
 

@@ -8,21 +8,26 @@ from __future__ import annotations
 import argparse
 
 
-def add_parser(subparsers) -> argparse.ArgumentParser:
+def add_parser(subparsers, parents=()) -> argparse.ArgumentParser:
     p = subparsers.add_parser(
         "rekordbox",
+        parents=list(parents),
         help="Read a Rekordbox library; export metadata or report duplicates.",
         description="Read a Rekordbox USB or database (read-only) and either "
                     "export track metadata or report duplicate tracks.",
     )
     p.add_argument("--usb-path", help="Mount path of the Rekordbox USB (e.g. E:/)")
     p.add_argument("--db-path", help="Direct path to master.db (overrides --usb-path)")
-    p.add_argument("--output-dir", default="./out", help="Where to write reports (default: ./out)")
+    p.add_argument("--output-dir", default=None,
+                   help="Write reports here instead of <out-dir>/rekordbox/.")
 
     p.add_argument(
         "--export-csv",
+        nargs="?",
+        const="",
         metavar="PATH",
-        help="Export track metadata to CSV (title, artist, bpm, time, key) and exit.",
+        help="Export track metadata to CSV (title, artist, bpm, time, key) and "
+             "exit. Bare flag writes <out-dir>/rekordbox/tracks.csv.",
     )
 
     p.add_argument(
