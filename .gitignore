@@ -10,3 +10,8 @@ tmp/
 out/
 *.csv
 *.txt
+
+# packaging
+*.egg-info/
+build/
+dist/

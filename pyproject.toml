@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sdm"
+version = "0.2.0"
+description = "Music library toolchain: acquire from Spotify, catalog local files, reconcile with Rekordbox."
+requires-python = ">=3.9"
+dependencies = [
+    "eyed3",
+    "mutagen>=1.45.0",
+    "requests>=2.31.0",
+    "tabulate",
+]
+
+# Heavy or platform-specific dependencies stay optional. Each feature imports
+# them inside its command handler, so `sdm --help` and unrelated subcommands
+# work without them installed.
+[project.optional-dependencies]
+rekordbox = [
+    "pyrekordbox>=0.4.0",
+    "pyacoustid>=1.3.0",
+]
+quality = [
+    "pandas",
+]
+all = [
+    "sdm[rekordbox,quality]",
+]
+
+[project.scripts]
+sdm = "sdm.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

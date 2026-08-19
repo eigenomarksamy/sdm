@@ -18,21 +18,10 @@ pyrekordbox's ORM objects.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from typing import Iterator, Optional
 
-_AUDIO_EXTS = (".mp3", ".m4a", ".flac", ".aif", ".aiff", ".wav", ".ogg")
-
-
-@dataclass(frozen=True)
-class Track:
-    id: str
-    title: str
-    artist: str
-    file_path: str          # absolute path on the local filesystem
-    bpm: Optional[float]    # beats per minute (None if Rekordbox has no value)
-    key: Optional[str]      # Rekordbox key label, e.g. "8A", "C minor"
-    duration_seconds: Optional[float]
+from sdm.core.tags import tracks_from_files
+from sdm.core.track import AUDIO_EXTS as _AUDIO_EXTS, Track
 
 
 def resolve_db_path(usb_path: Optional[str], db_path: Optional[str]) -> str:
@@ -169,7 +158,7 @@ def _scope_to_usb(local_tracks: list[Track], contents_dir: str) -> list[Track]:
                 unmatched_files.append(usb_file)
 
     if unmatched_files:
-        tracks.extend(_id3_tracks_for(unmatched_files, start_idx=len(tracks)))
+        tracks.extend(tracks_from_files(unmatched_files, start_idx=len(tracks)))
     print(f"matched {matched} USB track(s) to local analysis, {len(unmatched_files)} via ID3 only")
     return tracks
 
@@ -182,88 +171,7 @@ def _load_id3_tracks(contents_dir: str, usb_root: str) -> list[Track]:
         for filename in names
         if filename.lower().endswith(_AUDIO_EXTS)
     ]
-    return _id3_tracks_for(files, start_idx=0)
-
-
-def _id3_tracks_for(files: list[str], *, start_idx: int) -> list[Track]:
-    """Build Track objects for the given audio files from their embedded tags."""
-    try:
-        from mutagen import File
-    except ImportError:
-        raise RuntimeError("mutagen is required for ID3 reading. Install with: pip install mutagen")
-
-    tracks: list[Track] = []
-    idx = start_idx
-    for filepath in files:
-        idx += 1
-        title = "Unknown"
-        artist = "Unknown"
-        bpm = None
-        duration = None
-        key = None
-
-        try:
-            audio = File(filepath)
-            if audio is None:
-                continue
-
-            # Get duration
-            if hasattr(audio, "info") and hasattr(audio.info, "length"):
-                duration = audio.info.length
-
-            # Get title, artist, BPM, key from tags
-            if hasattr(audio, "tags") and audio.tags:
-                tags = audio.tags
-                # ID3 (MP3)
-                if hasattr(tags, "get"):
-                    title = tags.get("TIT2") or tags.get("Title") or "Unknown"
-                    artist = tags.get("TPE1") or tags.get("Artist") or "Unknown"
-                    bpm_tag = tags.get("TBPM")
-                    if bpm_tag and str(bpm_tag):
-                        try:
-                            bpm = float(str(bpm_tag))
-                        except (ValueError, TypeError):
-                            pass
-                    key_tag = tags.get("TKEY")
-                    if key_tag and str(key_tag):
-                        key = str(key_tag)
-                    if isinstance(title, bytes):
-                        title = title.decode("utf-8", errors="replace")
-                    if isinstance(artist, bytes):
-                        artist = artist.decode("utf-8", errors="replace")
-                # Vorbis (FLAC, OGG) and others
-                else:
-                    title = (tags.get("title") or ["Unknown"])[0] if isinstance(tags.get("title"), list) else tags.get("title") or "Unknown"
-                    artist = (tags.get("artist") or ["Unknown"])[0] if isinstance(tags.get("artist"), list) else tags.get("artist") or "Unknown"
-                    bpm_tag = tags.get("bpm")
-                    if bpm_tag:
-                        bpm_val = bpm_tag[0] if isinstance(bpm_tag, list) else bpm_tag
-                        try:
-                            bpm = float(bpm_val)
-                        except (ValueError, TypeError):
-                            pass
-                    key_tag = tags.get("initialkey") or tags.get("key")
-                    if key_tag:
-                        key_val = key_tag[0] if isinstance(key_tag, list) else key_tag
-                        key = str(key_val) or None
-        except Exception:
-            pass
-
-        if duration is None:
-            continue
-
-        tracks.append(
-            Track(
-                id=str(idx),
-                title=str(title),
-                artist=str(artist),
-                file_path=filepath,
-                bpm=bpm,
-                key=key,
-                duration_seconds=duration,
-            )
-        )
-    return tracks
+    return tracks_from_files(files, start_idx=0)
 
 
 def _iter_content_v6(db) -> Iterator:

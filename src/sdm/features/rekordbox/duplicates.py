@@ -16,8 +16,10 @@ from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Callable, Iterable, Optional
 
-from library_manager.fingerprint import Fingerprint, similarity
-from library_manager.rekordbox_reader import Track
+from sdm.core.grouping import UnionFind
+from sdm.core.text import normalize_simple as _normalize
+from sdm.core.track import Track
+from sdm.features.rekordbox.fingerprint import Fingerprint, similarity
 
 
 @dataclass
@@ -104,10 +106,6 @@ def find_duplicates_by_name(
         )
     log(f"title+artist: {len(groups)} duplicate group(s) from {len(by_name)} unique name(s)")
     return groups
-
-
-def _normalize(s: Optional[str]) -> str:
-    return " ".join((s or "").strip().lower().split())
 
 
 def _is_eligible(t: Track, config: DetectionConfig) -> bool:
@@ -209,31 +207,20 @@ def _build_groups(
     tracks: list[Track],
     pair_rules: dict[tuple[str, str], set[str]],
 ) -> list[DuplicateGroup]:
-    parent: dict[str, str] = {t.id: t.id for t in tracks}
-
-    def find(x: str) -> str:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(x: str, y: str) -> None:
-        rx, ry = find(x), find(y)
-        if rx != ry:
-            parent[rx] = ry
+    uf = UnionFind(t.id for t in tracks)
 
     rules_by_root: dict[str, set[str]] = defaultdict(set)
     for (id_a, id_b), rules in pair_rules.items():
-        union(id_a, id_b)
+        uf.union(id_a, id_b)
 
     # Recompute roots after all unions, then attach rules.
     for (id_a, id_b), rules in pair_rules.items():
-        rules_by_root[find(id_a)] |= rules
+        rules_by_root[uf.find(id_a)] |= rules
 
     members: dict[str, list[Track]] = defaultdict(list)
     tracks_by_id = {t.id: t for t in tracks}
     for tid in {tid for pair in pair_rules for tid in pair}:
-        members[find(tid)].append(tracks_by_id[tid])
+        members[uf.find(tid)].append(tracks_by_id[tid])
 
     groups: list[DuplicateGroup] = []
     for i, (root, group_tracks) in enumerate(sorted(members.items()), start=1):

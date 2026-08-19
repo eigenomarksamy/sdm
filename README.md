@@ -1,112 +1,180 @@
-# SPDL
+# sdm
 
-## Description
+A personal music-library toolchain for a DJ workflow, behind one command.
 
-This project is a tool to allow users to effortlessly download tracks and playlists fetched from Spotify, complete with metadata and album art.
+It covers a single pipeline — *acquire, catalog, reconcile* — split into isolated
+features that share a small common core:
 
-> [!IMPORTANT]
-> spdl is currently under development, so please expect frequent changes to the way it works.
+```text
+  sdm download        sdm catalog          sdm rekordbox        sdm quality
+  acquire from        catalog & audit      reconcile with       verify real
+  Spotify             local MP3s           Rekordbox/USB        audio quality
+       \                   |                     |                  /
+        \__________________ sdm.core ___________________________ ___/
+             track model · normalization · tags · grouping · reports
+```
 
-## Requirements and Installation
+Each feature is self-contained: it may use `sdm.core`, never a sibling. Heavy
+dependencies are optional extras loaded only when their subcommand runs, so
+`sdm download` works on a machine with no Rekordbox and no ffmpeg.
 
-**System Requirements:**
-
-* **Python**: `version 3.8` or above
-* **Pip** package manager (Use `pip --version` to check, otherwise instructions to install pip can be found [here](https://pip.pypa.io/en/stable/installation/))
-
-**Installation:**
-
-1. Launch your terminal instance and navigate to the `spdl` directory
-2. Execute `pip install -r requirements.txt` to install the dependencies
-
-## Usage
-
-To download a track or playlist, run the main file using the following command:
+## Install
 
 ```ps1
-python main.py -link <link to your track or playlist>
+pip install -e .              # base: download + catalog
+pip install -e ".[all]"       # everything
+pip install -e ".[rekordbox]" # + Rekordbox reading and fingerprinting
+pip install -e ".[quality]"   # + the bitrate checker
 ```
 
-Optionally the download directory can be specified using the `-outpath` flag. If no outpath is provided, downloads default to the current directory.
-
-Example:
+Requires Python 3.9+. Two features need external binaries on PATH:
+`ffmpeg`/`ffprobe` for `sdm quality`, and `fpcalc`
+([chromaprint](https://acoustid.org/chromaprint)) for fingerprint-based
+duplicate detection.
 
 ```ps1
-python main.py -link "https://open.spotify.com/track/6UVEJw6Ikma86JNK55KPkc?si=78dd2cdb137c4214" -outpath "F:/Songs/"
+sdm --help
+sdm <command> --help
 ```
 
-_Note 1: You can paste more than one link one after the other separated by space to download multiple tracks at once_
-_Note 2: For playlists, by default the program saves the tracks in a folder with the name of the playlist_
+---
 
-## Different Use Cases
+## `sdm download`
 
-1. Download a single track or playlist:
+Downloads tracks and playlists from Spotify, writes ID3 tags, and embeds album
+art.
 
-   ```ps1
-   python main.py -link "https://open.spotify.com/track/6UVEJw6Ikma86JNK55KPkc?si=78dd2cdb137c4214"
-   ```
-
-2. Download a single track or playlist at a specified location:
-
-   ```ps1
-   python main.py -link "https://open.spotify.com/track/6UVEJw6Ikma86JNK55KPkc?si=78dd2cdb137c4214" -outpath "F:/Songs"
-   ```
-
-3. Download multiple  tracks / multiple playlists / or a combination:
-
-   ```ps1
-   python main.py -link "https://open.spotify.com/track/6UVEJw6Ikma86JNK55KPkc?si=78dd2cdb137c4214" "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=9fab95ad8ab349a7"
-   ```
-
-4. Download multiple  tracks / multiple playlists / or a combination to a specified location:
-
-   ```ps1
-   python main.py -link "https://open.spotify.com/track/6UVEJw6Ikma86JNK55KPkc?si=78dd2cdb137c4214" "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=9fab95ad8ab349a7" -outpath "F:/Songs
-   ```
-
-5. Download playlist(s) track in a single folder (default is to make playlist folder(s)):
-
-   ```ps1
-   python main.py -link "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=9fab95ad8ab349a7" -outpath "F:/Songs" -folder False
-   ```
-
-6. Download / Sync Spotify playlists with local playlists when sync.json is not present or is in present directory:
-
-   ```ps1
-   python main.py -sync
-   ```
-
-7. Download / Sync Spotify playlists with local playlists when sync.json is in a specified directory:
-
-   ```ps1
-    python main.py -sync "F:/Songs/sync.json"
-   ```
-
-### sync.json Structure
-
-The first time you try to run the sync command, the program will ask you for the playlist info and the sync.json will be created automatically. If you wish to manually create a sync.json file or modify the existing one, use the following structure:
-
-```json
-[
-    {
-        "name": "<Playlist Name 1>",
-        "link": "<Playlist Link>",
-        "create_folder": true,
-        "download_location": "F:/Songs"
-    },
-    {
-        "name": "<Playlist Name 2>",
-        "link": "<Playlist Link>",
-        "create_folder": true,
-        "download_location": "F:/Songs"
-    }
-]
+```ps1
+sdm download --link "<spotify track or playlist url>" --output "F:/Songs" --disable-gui
 ```
 
-## Feedback
+`--disable-gui` is currently required — the GUI branch is a stub, so without it
+the command exits without doing anything.
 
-I would greatly appreciate your feedback after using the tool. Your insights helps it improve!
+Multiple links can be passed at once, and tracks and playlists can be mixed:
 
-## Feature Request/Contributions
+```ps1
+sdm download --link "<track url>" "<playlist url>" --output "F:/Songs" --disable-gui
+```
 
-I would not be able to take in feature requests at this point, but I would love to accept contributions/pull requests if anyone is willing to work on any issue.
+By default each playlist gets its own folder; pass `--folder False` to download
+everything flat. Tracks that already exist in the destination are skipped, and
+zero-byte files left behind by a failed download are cleaned up.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--link`, `-l` | — | One or more Spotify track/playlist URLs |
+| `--output`, `-o` | `./downloads` | Destination directory |
+| `--folder` | `True` | Create a folder per playlist |
+| `--no-make-dirs` | off | Fail instead of creating missing directories |
+| `--tf` | off | Name files `Track - Artist` instead of `Artist - Track` |
+| `--disable-gui` | off | Run the CLI (required — see above) |
+| `--quiet`, `-q` | off | Suppress console output |
+| `--dry-run`, `-n` | off | Simulate a run |
+| `--disable-log` | off | Suppress logging |
+
+`--sync` and `--run-pp` are accepted by the parser but not yet wired up.
+
+---
+
+## `sdm catalog`
+
+Walks a music folder and produces an **auditable** catalog — an export, a
+duplicate report, and a proof that the export is complete.
+
+```ps1
+sdm catalog "C:\Users\omark\Music\postmodern"
+```
+
+Writes two files:
+
+- `mp3_file_list_<folder>.csv` — `#, filename, track name, artist` per track
+- `mp3_file_list_<folder>_x_val.txt` — one raw file path per line
+
+Then prints:
+
+1. **Duplicates.** Titles are normalized (Unicode NFKC, casefolded, whitespace
+   collapsed) and mix suffixes such as `(Original Mix)` or `- Original Mix` are
+   stripped before grouping on `(title, artist)`. Extend `MIX_SUFFIXES` in
+   `sdm/core/text.py` to cover `Extended Mix`, `Radio Edit`, and friends.
+2. **Cross-validation.** The directory is walked a second time and set-diffed
+   against the sidecar, reporting anything missing from the export, anything in
+   the export no longer on disk, and any duplicate entries. A clean run reports
+   `is_valid: True` — the guarantee this feature exists to provide.
+
+Use `--output-csv PATH` to control the destination; the sidecar name is derived
+from it.
+
+> Pass the folder with **backslashes**. Cross-validation compares the sidecar's
+> paths against normalized absolute paths, so a forward-slash argument makes
+> every file look both missing and extra. A long-standing quirk, not a new one.
+
+---
+
+## `sdm rekordbox`
+
+Reads a Rekordbox library — canonical track list plus analyzed BPM, key and
+duration — and reports duplicates. **Read-only by design:** it never writes to
+the USB or to the Rekordbox database.
+
+```ps1
+# export every track's metadata
+sdm rekordbox --usb-path D:/ --export-csv library_with_analysis.csv
+
+# duplicates by title + artist (covers every track, needs no analysis data)
+sdm rekordbox --usb-path D:/ --output-dir ./out --duplicates-by-name
+
+# duplicates by audio fingerprint (default), or --skip-fingerprint for a fast pass
+sdm rekordbox --usb-path D:/ --output-dir ./out
+```
+
+Data comes from, in order: a `master.db` you point at directly, then your
+**local** Rekordbox `master.db` — the only source carrying analyzed BPM and key,
+so it wins even when a USB is supplied, then scoped down to the tracks actually
+on the USB — and finally raw ID3 tags as a last resort. The exported
+`export.pdb` / `exportLibrary.db` on the USB are encrypted DeviceSQL and are
+skipped.
+
+Audio duplicate detection runs in two stages: a cheap prefilter grouping tracks
+by BPM, key and duration within tolerance, then a chromaprint comparison to
+confirm, with confirmed pairs linked into groups.
+
+Full flag reference and setup notes: [docs/rekordbox.md](docs/rekordbox.md).
+
+---
+
+## `sdm quality`
+
+Decodes each file with `ffprobe`/`ffmpeg` to measure its *actual* sample rate
+and bitrate, then diffs those against what the ID3 tags claim — useful for
+spotting re-encoded files passed off as high quality.
+
+```ps1
+sdm quality "F:/Songs" --output-csv quality_report.csv
+```
+
+---
+
+## Layout
+
+```text
+src/sdm/
+  cli.py              top-level parser; features register their own subcommand
+  core/               shared, dependency-light
+    track.py          the one Track model
+    text.py           title/artist normalization (two strictnesses, on purpose)
+    tags.py           ID3/Vorbis readers
+    grouping.py       union-find, for collapsing pairwise matches into groups
+    report.py         CSV/JSON/sidecar writers
+  features/
+    spotify/          sdm download
+    catalog/          sdm catalog
+    rekordbox/        sdm rekordbox
+    quality/          sdm quality
+docs/rekordbox.md     detailed Rekordbox reference
+legacy/               superseded code, not imported
+```
+
+Windows-first throughout — examples assume PowerShell and drive letters. There
+is no test suite; changes are verified by running the tools against a real
+folder or USB. Catalog CSVs and reports are gitignored.

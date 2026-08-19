@@ -1,7 +1,8 @@
-import sys
 from argparse import Namespace
-from src.cfg_mngr import Cfg
-from src.cli_mngr import parse_arguments, run_cli
+
+from sdm.features.spotify.config import Cfg
+from sdm.features.spotify.runner import run_cli
+
 
 def run(args: Namespace) -> dict:
     cfg_obj = Cfg(naming_convention=Cfg.NamingConventions.TRACK_ARTIST \
@@ -15,6 +16,3 @@ def run(args: Namespace) -> dict:
         run_cli(cfg_obj, args.link)
     else:
         pass
-
-if __name__ == '__main__':
-    sys.exit(run(parse_arguments()))
