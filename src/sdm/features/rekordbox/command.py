@@ -2,20 +2,17 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
-from dataclasses import asdict
 from typing import Optional
 
-from sdm.core.paths import out_dir, resolve_output
-from sdm.core.report import ensure_dir, write_csv, write_json
-from sdm.features.rekordbox.duplicates import (
+from sdm.core.duplicates import (
     DetectionConfig,
-    DuplicateGroup,
     find_duplicates,
     find_duplicates_by_name,
 )
-from sdm.features.rekordbox.fingerprint import Fingerprint, compute as compute_fingerprint
+from sdm.core.fingerprint import Fingerprint, compute as compute_fingerprint
+from sdm.core.paths import out_dir, resolve_output
+from sdm.core.report import ensure_dir, write_csv, write_duplicate_report
 from sdm.features.rekordbox.reader import Track, load_tracks, resolve_db_path
 
 
@@ -66,10 +63,7 @@ def run(args: argparse.Namespace) -> int:
     print(f"found {len(groups)} duplicate group(s)")
 
     report_dir = ensure_dir(args.output_dir) if args.output_dir else out_dir("rekordbox")
-    csv_path = os.path.join(report_dir, "duplicates.csv")
-    json_path = os.path.join(report_dir, "duplicates.json")
-    _write_csv(csv_path, groups)
-    _write_json(json_path, groups)
+    csv_path, json_path = write_duplicate_report(report_dir, groups)
     print(f"wrote {csv_path}")
     print(f"wrote {json_path}")
     return 0
@@ -89,52 +83,4 @@ def _export_csv(path: str, tracks: list[Track]) -> None:
             ]
             for t in sorted(tracks, key=lambda x: (x.artist, x.title))
         ),
-    )
-
-
-def _write_csv(path: str, groups: list[DuplicateGroup]) -> None:
-    def rows():
-        for g in groups:
-            rules = "+".join(sorted(g.matched_rules))
-            for t in g.tracks:
-                yield [
-                    g.group_id,
-                    rules,
-                    t.id,
-                    t.artist,
-                    t.title,
-                    t.bpm if t.bpm is not None else "",
-                    t.key or "",
-                    t.duration_seconds if t.duration_seconds is not None else "",
-                    t.file_path,
-                ]
-
-    write_csv(
-        path,
-        [
-            "group_id",
-            "matched_rules",
-            "track_id",
-            "artist",
-            "title",
-            "bpm",
-            "key",
-            "duration_seconds",
-            "file_path",
-        ],
-        rows(),
-    )
-
-
-def _write_json(path: str, groups: list[DuplicateGroup]) -> None:
-    write_json(
-        path,
-        [
-            {
-                "group_id": g.group_id,
-                "matched_rules": sorted(g.matched_rules),
-                "tracks": [asdict(t) for t in g.tracks],
-            }
-            for g in groups
-        ],
     )

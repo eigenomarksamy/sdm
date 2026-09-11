@@ -21,7 +21,7 @@ import os
 from typing import Iterator, Optional
 
 from sdm.core.tags import tracks_from_files
-from sdm.core.track import AUDIO_EXTS as _AUDIO_EXTS, Track
+from sdm.core.track import AUDIO_EXTS as _AUDIO_EXTS, Track, iter_audio_files
 
 
 def resolve_db_path(usb_path: Optional[str], db_path: Optional[str]) -> str:
@@ -165,13 +165,7 @@ def _scope_to_usb(local_tracks: list[Track], contents_dir: str) -> list[Track]:
 
 def _load_id3_tracks(contents_dir: str, usb_root: str) -> list[Track]:
     """Walk Contents/ and read ID3 tags + duration from audio files."""
-    files = [
-        os.path.normpath(os.path.join(root, filename))
-        for root, _, names in os.walk(contents_dir)
-        for filename in names
-        if filename.lower().endswith(_AUDIO_EXTS)
-    ]
-    return tracks_from_files(files, start_idx=0)
+    return tracks_from_files(list(iter_audio_files(contents_dir)), start_idx=0)
 
 
 def _iter_content_v6(db) -> Iterator:

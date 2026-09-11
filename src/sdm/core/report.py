@@ -9,7 +9,11 @@ from __future__ import annotations
 import csv
 import json
 import os
-from typing import Any, Iterable, Sequence
+from dataclasses import asdict
+from typing import TYPE_CHECKING, Any, Iterable, Sequence
+
+if TYPE_CHECKING:
+    from sdm.core.duplicates import DuplicateGroup
 
 
 def write_csv(path: str, header: Sequence[str], rows: Iterable[Sequence[Any]]) -> None:
@@ -44,3 +48,63 @@ def ensure_dir(path: str) -> str:
     """Create `path` if missing and return it."""
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def write_duplicate_report(
+    report_dir: str, groups: Iterable["DuplicateGroup"]
+) -> tuple[str, str]:
+    """Write `duplicates.csv` and `duplicates.json` into `report_dir`.
+
+    One writer for every feature that detects duplicates, so a report from a
+    folder scan and one from a Rekordbox library have the same shape and can be
+    diffed against each other.
+    """
+    groups = list(groups)
+    csv_path = os.path.join(report_dir, "duplicates.csv")
+    json_path = os.path.join(report_dir, "duplicates.json")
+
+    def rows():
+        for g in groups:
+            rules = "+".join(sorted(g.matched_rules))
+            for t in g.tracks:
+                yield [
+                    g.group_id,
+                    rules,
+                    t.id,
+                    t.artist,
+                    t.title,
+                    t.bpm if t.bpm is not None else "",
+                    t.key or "",
+                    t.duration_seconds if t.duration_seconds is not None else "",
+                    t.file_path,
+                ]
+
+    write_csv(
+        csv_path,
+        [
+            "group_id",
+            "matched_rules",
+            "track_id",
+            "artist",
+            "title",
+            "bpm",
+            "key",
+            "duration_seconds",
+            "file_path",
+        ],
+        rows(),
+    )
+
+    write_json(
+        json_path,
+        [
+            {
+                "group_id": g.group_id,
+                "matched_rules": sorted(g.matched_rules),
+                "tracks": [asdict(t) for t in g.tracks],
+            }
+            for g in groups
+        ],
+    )
+
+    return csv_path, json_path

@@ -8,6 +8,19 @@ and compare. Pairs with similarity >= threshold are linked into a duplicate
 group via union-find.
 
 Output groups record which rule(s) matched ("metadata", "fingerprint", or both).
+
+**Which dimensions the prefilter may use depends on the source**, which is why
+`require_bpm` and `key_must_match` are configurable rather than assumed:
+
+- A Rekordbox library has analyzed BPM and key for every track, so all three
+  dimensions are available and the prefilter is sharp.
+- A plain folder has only what the tags carry. Duration is decoded from the
+  stream and is therefore always present; BPM and key usually are not. Requiring
+  them there would silently discard most of the library, so a folder scan
+  prefilters on duration alone and leans on the fingerprint to do the deciding.
+
+A dimension that is not required is still used opportunistically: if both tracks
+in a pair happen to carry a BPM, it is checked as a cheap extra discriminator.
 """
 from __future__ import annotations
 
@@ -16,10 +29,10 @@ from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Callable, Iterable, Optional
 
+from sdm.core.fingerprint import Fingerprint, similarity
 from sdm.core.grouping import UnionFind
 from sdm.core.text import normalize_simple as _normalize
 from sdm.core.track import Track
-from sdm.features.rekordbox.fingerprint import Fingerprint, similarity
 
 
 @dataclass
@@ -34,6 +47,7 @@ class DetectionConfig:
     bpm_tolerance: float = 0.5
     duration_tolerance: float = 2.0
     key_must_match: bool = True
+    require_bpm: bool = True
     fingerprint_threshold: float = 0.85
     skip_fingerprint: bool = False
 
@@ -109,7 +123,11 @@ def find_duplicates_by_name(
 
 
 def _is_eligible(t: Track, config: DetectionConfig) -> bool:
-    if t.bpm is None or t.duration_seconds is None:
+    # Duration is the one dimension every source can supply, so it is always
+    # required; the other two are only required when the caller says they exist.
+    if t.duration_seconds is None:
+        return False
+    if config.require_bpm and t.bpm is None:
         return False
     if config.key_must_match and not t.key:
         return False
@@ -121,16 +139,20 @@ def _prefilter_pairs(
 ) -> list[tuple[Track, Track]]:
     # Bucket by quantized BPM and duration (and key if required). Quantization
     # uses the tolerance as the bucket width, so two tracks within tolerance
-    # land in the same OR adjacent bucket — we check both.
+    # land in the same OR adjacent bucket — we check both. A dimension that is
+    # not required collapses to a single bin, which widens the bucket rather
+    # than excluding the tracks that lack it.
     bpm_step = max(config.bpm_tolerance, 1e-6)
     dur_step = max(config.duration_tolerance, 1e-6)
 
     buckets: dict[tuple, list[Track]] = defaultdict(list)
     for t in tracks:
-        bpm_bin = int(t.bpm / bpm_step)
+        bpm_bin = int(t.bpm / bpm_step) if config.require_bpm else None
         dur_bin = int(t.duration_seconds / dur_step)
         key = (t.key if config.key_must_match else None, bpm_bin, dur_bin)
         buckets[key].append(t)
+
+    bpm_deltas = (-1, 0, 1) if config.require_bpm else (0,)
 
     pairs: list[tuple[Track, Track]] = []
     seen: set[tuple[str, str]] = set()
@@ -138,11 +160,12 @@ def _prefilter_pairs(
     for (key, bpm_bin, dur_bin), bucket_tracks in buckets.items():
         # Compare within bucket and with neighbouring bins (covers tolerance edge cases).
         neighbours: list[Track] = []
-        for d_bpm in (-1, 0, 1):
+        for d_bpm in bpm_deltas:
             for d_dur in (-1, 0, 1):
                 if d_bpm == 0 and d_dur == 0:
                     continue
-                neighbours.extend(buckets.get((key, bpm_bin + d_bpm, dur_bin + d_dur), []))
+                neighbour_bpm = bpm_bin + d_bpm if bpm_bin is not None else None
+                neighbours.extend(buckets.get((key, neighbour_bpm, dur_bin + d_dur), []))
 
         for a, b in combinations(bucket_tracks, 2):
             if _within_tolerance(a, b, config):
@@ -167,8 +190,11 @@ def _prefilter_pairs(
 def _within_tolerance(a: Track, b: Track, config: DetectionConfig) -> bool:
     if config.key_must_match and a.key != b.key:
         return False
-    if abs((a.bpm or 0) - (b.bpm or 0)) > config.bpm_tolerance:
-        return False
+    # When BPM is required both values exist; when it is not, only compare the
+    # pairs that happen to have one on both sides.
+    if a.bpm is not None and b.bpm is not None:
+        if abs(a.bpm - b.bpm) > config.bpm_tolerance:
+            return False
     if abs((a.duration_seconds or 0) - (b.duration_seconds or 0)) > config.duration_tolerance:
         return False
     return True
@@ -180,6 +206,8 @@ def _confirm_with_fingerprints(
     threshold: float,
     log: Callable[[str], None],
 ) -> list[tuple[Track, Track]]:
+    # One fingerprint per track, not per pair: a track in a crowded bucket is
+    # compared against many others, and fingerprinting is the expensive step.
     cache: dict[str, Optional[Fingerprint]] = {}
 
     def get(t: Track) -> Optional[Fingerprint]:
@@ -199,6 +227,11 @@ def _confirm_with_fingerprints(
         if i % 25 == 0:
             log(f"fingerprint: {i}/{len(pairs)} pair(s) compared")
 
+    # A track that could not be fingerprinted is silently unmatchable, which
+    # looks exactly like a clean library. Say how many, so it can't hide.
+    unreadable = sum(1 for v in cache.values() if v is None)
+    if unreadable:
+        log(f"fingerprint: {unreadable} of {len(cache)} track(s) could not be fingerprinted")
     log(f"fingerprint: {len(confirmed)} pair(s) confirmed out of {len(pairs)}")
     return confirmed
 

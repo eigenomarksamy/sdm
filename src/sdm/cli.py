@@ -17,9 +17,9 @@ from typing import Optional
 
 from sdm import __version__
 from sdm.core import paths
-from sdm.features import catalog, quality, rekordbox, spotify
+from sdm.features import catalog, duplicates, quality, rekordbox, spotify
 
-FEATURES = (spotify, catalog, rekordbox, quality)
+FEATURES = (spotify, catalog, duplicates, rekordbox, quality)
 
 
 def _common_parser() -> argparse.ArgumentParser:
