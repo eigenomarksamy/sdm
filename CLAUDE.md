@@ -62,7 +62,8 @@ sdm quality "F:/Songs"
 `pyproject.toml` is the only dependency manifest — there is no `requirements.txt`.
 It does not tell the whole story though: fingerprinting needs the `fpcalc`
 binary and `sdm quality` needs `ffprobe`/`ffmpeg`, neither of which pip can
-install. Both are documented in a comment at the bottom of `pyproject.toml`.
+install. (`sdm duplicates` borrows a temporary `fpcalc` when none is
+installed — see `core/fpcalc_fetch.py` — but `sdm rekordbox` does not.) Both are documented in a comment at the bottom of `pyproject.toml`.
 pyacoustid is deliberately *not* a dependency — see `core/fingerprint.py`.
 
 There is no test suite, linter config, or CI. Verify changes by running the
@@ -89,6 +90,18 @@ identical inputs.
 - `tags.py` — `read_basic_tags` (eyed3, title/artist, reports errors) and
   `tracks_from_files` (mutagen, full `Track` incl. BPM/key/duration). Both are
   best-effort: unreadable tags yield "Unknown" rather than aborting.
+  **Do not reintroduce a per-container branch here.** `tracks_from_files` used
+  to pick an ID3 path vs a Vorbis path on `hasattr(tags, "get")` — but *every*
+  mutagen tag object has `.get`, so FLAC and OGG took the ID3 path, where
+  `TBPM`/`TKEY` do not exist and the Vorbis lookups were dead code. Every FLAC
+  in a library came out with no BPM, no key, and a title stringified straight
+  from the list mutagen returns (`"['Somefunkydrum']"`), which also broke name
+  matching against the same track's mp3. `_tag` now tries each field's ID3,
+  Vorbis and MP4 spelling in turn; the names do not collide across formats, so
+  the first hit is right and no sniffing is needed. `_first` is the other half:
+  Vorbis values are lists, ID3 values are frames.
+  A BPM tag of `0` is read as absent — a placeholder would otherwise satisfy
+  `require_bpm` and then compare against nothing.
 - `grouping.py` — `UnionFind`, for collapsing pairwise matches into groups.
   Feature-specific group *construction* stays in the feature.
 - `duplicates.py` — the two-stage detector (metadata prefilter → fingerprint
@@ -115,6 +128,25 @@ identical inputs.
   agree by chance. That is why the threshold is 0.85 and not something near zero.
   A missing binary raises `RuntimeError`; a file that merely fails to decode
   returns `None`. Callers depend on that distinction.
+- `fpcalc_fetch.py` — the escape hatch for the one dependency pip cannot
+  install. `borrowed_fpcalc()` is a context manager: it yields an already
+  installed fpcalc if there is one (downloading nothing), otherwise it fetches
+  the pinned Chromaprint release archive into a `paths.scratch` under `tmp/`,
+  unpacks the binary, checks it actually runs, and yields that — **and a
+  `finally` deletes it when the block exits, on success, on error and on Ctrl-C
+  alike.** That `finally` is `_purge`, not `paths.scratch`'s own removal, and
+  the difference is load-bearing on Windows: `scratch` removes with
+  `ignore_errors=True`, and after a long run the just-executed `.exe` can still
+  be held open (a scanner reading the image it watched run), so `rmtree` loses
+  on a sharing violation and says nothing. A full-library run leaked exactly one
+  scratch that way. `_purge` retries for a few seconds and, if it still cannot,
+  says so. Borrowed, not installed: nothing touches PATH, so a user
+  who minds re-downloading ~2 MB per run should install fpcalc properly, which
+  is detected first and skips all of this. Stdlib only (`urllib`, `zipfile`,
+  `tarfile`), because the thing that makes fingerprinting possible must not
+  itself need a dependency that is missing. `CHROMAPRINT_VERSION` is pinned
+  rather than resolved from the "latest release" API so a run cannot silently
+  change binaries.
 - `report.py` — all CSV/JSON/sidecar writers. `newline=""` here is what stops
   the `csv` module writing blank lines between rows on Windows.
   `write_duplicate_report` is the shared duplicate CSV+JSON writer, so a folder
@@ -125,9 +157,10 @@ identical inputs.
   `cli.py` from `--out-dir`/`--tmp-dir` (falling back to `SDM_OUT_DIR`/
   `SDM_TMP_DIR`, then `./out` and `./tmp`). `out_dir(feature)` gives
   `out/<feature>/`; `scratch(prefix)` is a context manager yielding a temp dir
-  under `tmp/` that is removed on exit. **Nothing calls `scratch` yet** — no
-  feature currently writes intermediates — it exists so that when one needs to,
-  the scratch stays in the project rather than the system temp directory.
+  under `tmp/` that is removed on exit. `core/fpcalc_fetch.py` is its one
+  caller, and shows what the in-project location buys: a hard kill that no
+  `finally` survives leaves the debris somewhere visible and already gitignored,
+  rather than in the system temp directory.
   `resolve_output(path, feature, default_name)` is the rule every output flag
   goes through: `None` → the default under `out/<feature>/`, a bare filename →
   that name under `out/<feature>/`, anything with a directory component → used
@@ -198,6 +231,14 @@ most of the library, so the prefilter keys on duration alone by default and the
 fingerprint does the deciding. `--require-bpm` / `--require-key` are there for
 libraries known to be fully tagged, and are much faster.
 
+**Measured tag coverage** on the test clone (3,664 files), so "usually absent"
+has a number: BPM 1,814 (50%), key 3,656 (99.8%). Blank BPM columns in the
+report are the files, not the reader — it extracts every `TBPM` frame present.
+The report skews further (10% of its rows carry BPM) because duplicate groups
+are mostly album rips, which are the tracks least likely to have been
+DJ-analyzed. `--require-key` is therefore nearly free on this library while
+`--require-bpm` would discard half of it.
+
 **`--skip-fingerprint` is a sizing tool, not an answer.** Duration-only
 bucketing is deliberately permissive: on a 3,459-track folder it produced 57,176
 candidate pairs which union-find then chained into one group of 3,297. Use it to
@@ -206,7 +247,19 @@ see how big a run will be; do not read its groups as duplicates.
 The run fingerprints every eligible track once. `command.py` pre-flights
 `PREFLIGHT_TRACKS` files first — without `fpcalc` every pair is dropped and the
 run would otherwise end with a meaningless "0 duplicate groups". More than one
-file is tried so a single corrupt track cannot abort a healthy run.
+file is tried so a single corrupt track cannot abort a healthy run. The
+pre-flight swallows the `RuntimeError` that `compute` raises for a missing
+binary: at that one point "no binary" and "nothing fingerprinted" are the same
+answer, and that is what keeps a missing fpcalc an error message rather than a
+traceback.
+
+`fpcalc` no longer has to be installed. The whole detection runs inside
+`core.fpcalc_fetch.borrowed_fpcalc`, which uses an installed binary if there is
+one and otherwise downloads a temporary one into `tmp/` for the run and deletes
+it afterwards. `--no-fetch-fpcalc` opts out and fails instead. The binary is
+resolved once for the run, so **everything that fingerprints must stay inside
+that `with` block** — leaving it deletes the binary. `sdm rekordbox` is not
+wired to it yet and still needs fpcalc on PATH.
 
 **Measured baseline** (`test-sdm-lib-clone/pioneer-usb-full-clone`, 3,664 files):
 9m12s wall, 64,272 candidate pairs, 178 confirmed, **158 groups** (148 pairs, 10

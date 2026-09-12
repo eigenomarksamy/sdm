@@ -6,12 +6,12 @@ It covers a single pipeline — *acquire, catalog, reconcile* — split into iso
 features that share a small common core:
 
 ```text
-  sdm download        sdm catalog          sdm rekordbox        sdm quality
-  acquire from        catalog & audit      reconcile with       verify real
-  Spotify             local MP3s           Rekordbox/USB        audio quality
-       \                   |                     |                  /
-        \__________________ sdm.core ___________________________ ___/
-             track model · normalization · tags · grouping · reports
+ sdm download    sdm catalog     sdm duplicates   sdm rekordbox    sdm quality
+ acquire from    catalog &       find dupes by    reconcile with   verify real
+ Spotify         audit MP3s      how they sound   Rekordbox/USB    audio quality
+      \               |                |                |               /
+       \_____________________ sdm.core _____________________________ __/
+        track model · normalization · tags · fingerprints · reports
 ```
 
 Each feature is self-contained: it may use `sdm.core`, never a sibling. Heavy
@@ -32,6 +32,11 @@ Requires Python 3.9+. Two features need external binaries on PATH:
 ([chromaprint](https://acoustid.org/chromaprint)) for fingerprint-based
 duplicate detection.
 
+`sdm duplicates` is the exception: if no `fpcalc` is installed it borrows one
+for the run — downloaded into `tmp/`, used, and deleted again when the command
+exits — so it works with nothing on PATH. `sdm rekordbox` still needs a real
+installation for its fingerprint stage.
+
 ```ps1
 sdm --help
 sdm <command> --help
@@ -45,6 +50,7 @@ that produced it:
 ```text
 ./out/
   catalog/     mp3_file_list_<folder>.csv + _x_val.txt sidecar
+  duplicates/  duplicates.csv, duplicates.json
   rekordbox/   duplicates.csv, duplicates.json, tracks.csv
   quality/     the bitrate report, when --output-csv is given
   logs/        download.log
@@ -149,6 +155,91 @@ from it, and the two always stay together.
 
 ---
 
+## `sdm duplicates`
+
+Finds duplicate tracks in a **folder** by what they sound like. Not by filename,
+size or checksum — so it catches the same recording saved twice under different
+names, and an mp3 and a flac of the same track, which none of those would.
+
+**Read-only.** It reports; it never moves, renames or deletes a file. Needs no
+`fpcalc` installed (see [Install](#install)).
+
+```ps1
+sdm duplicates "F:/Songs"
+```
+
+### Which command to use
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `sdm duplicates "F:/Songs"` | Groups tracks by duration, then confirms every candidate pair by audio fingerprint | The answer. Slow — budget ~0.14s per track |
+| `sdm duplicates "F:/Songs" --skip-fingerprint` | Prefilter only, no fingerprinting | **Sizing, not answers.** Tells you how big the real run will be, in seconds |
+| `sdm duplicates "F:/Songs" --require-key` | Adds musical key to the prefilter | Much faster, and nearly free if your files are key-tagged |
+| `sdm duplicates "F:/Songs" --require-bpm` | Adds BPM to the prefilter | Only when you know the library is fully BPM-tagged |
+| `sdm duplicates "F:/Songs" --output-dir "D:/reports"` | Writes the report elsewhere | Keeping a run's output outside the project |
+| `sdm duplicates "F:/Songs" --fpcalc-path "C:\tools\fpcalc.exe"` | Uses your own fpcalc | You have one installed somewhere off PATH |
+| `sdm duplicates "F:/Songs" --no-fetch-fpcalc` | Fails rather than downloading a temporary fpcalc | Offline, or you want the binary under your own control |
+
+> **`--skip-fingerprint` output is not a list of duplicates.** Duration-only
+> bucketing is deliberately permissive: on a 3,459-track folder it produced
+> 57,176 candidate pairs, which union-find then chained into a single group of
+> 3,297 tracks. Read it as a size estimate and nothing more.
+>
+> **`--require-bpm` can silently discard most of a library.** On the test
+> library only 50% of files carry a BPM tag, against 99.8% for key — the flags
+> look symmetrical but are not. Anything untagged is dropped before
+> fingerprinting, and never appears in the report at all.
+
+### How it decides
+
+Two stages. A cheap **prefilter** buckets tracks that could plausibly match,
+then a **chromaprint fingerprint** comparison confirms each candidate pair, and
+confirmed pairs are linked into groups.
+
+Duration is the only dimension always available — it is decoded from the audio
+stream rather than read from a tag — so it is always required, and BPM and key
+are opt-in via the two `--require` flags. A non-required dimension is still used
+opportunistically whenever both tracks in a pair happen to carry it.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--duration-tolerance` | `2.0` | Seconds two tracks may differ by and still be compared |
+| `--bpm-tolerance` | `0.5` | BPM two tracks may differ by, when both carry one |
+| `--require-bpm` | off | Prefilter on BPM; skips files with no BPM tag |
+| `--require-key` | off | Prefilter on key; skips files with no key tag |
+| `--fingerprint-threshold` | `0.85` | Similarity at which a pair is called a duplicate |
+| `--skip-fingerprint` | off | Report prefilter candidates without fingerprinting |
+| `--fpcalc-path` | — | Path to an fpcalc binary that is not on PATH |
+| `--no-fetch-fpcalc` | off | Do not download a temporary fpcalc; fail instead |
+| `--output-dir` | `out/duplicates/` | Where the report goes |
+
+The threshold is `0.85` rather than something near zero because unrelated audio
+scores about **0.5**, not 0 — half the bits of two random 32-bit words agree by
+chance.
+
+Before the real work starts, the command fingerprints a handful of files as a
+pre-flight. Without it, a broken `fpcalc` would drop every pair and the run
+would end hours later reporting "0 duplicate groups" — a clean bill of health
+that means nothing.
+
+### What a full run looks like
+
+On the 3,664-file reference library:
+
+```text
+prefilter: 64272 candidate pair(s) from 3664 eligible track(s)
+fingerprint: 9 of 3625 track(s) could not be fingerprinted
+fingerprint: 178 pair(s) confirmed out of 64272
+found 158 duplicate group(s)
+```
+
+Roughly nine minutes, almost all of it fingerprinting: 158 groups — 148 pairs
+and 10 triples — from 64,272 candidates. Those numbers are the regression check;
+a run on the same folder reporting far more or far fewer groups means something
+changed.
+
+---
+
 ## `sdm rekordbox`
 
 Reads a Rekordbox library — canonical track list plus analyzed BPM, key and
@@ -205,13 +296,17 @@ src/sdm/
   core/               shared, dependency-light
     track.py          the one Track model
     text.py           title/artist normalization (two strictnesses, on purpose)
-    tags.py           ID3/Vorbis readers
+    tags.py           ID3/Vorbis/MP4 readers
     grouping.py       union-find, for collapsing pairwise matches into groups
+    duplicates.py     the two-stage detector, shared by two features
+    fingerprint.py    chromaprint via fpcalc
+    fpcalc_fetch.py   borrows an fpcalc for one run when none is installed
     report.py         CSV/JSON/sidecar writers — how a file is written
     paths.py          out/ and tmp/ resolution — where it is written
   features/
     spotify/          sdm download
     catalog/          sdm catalog
+    duplicates/       sdm duplicates
     rekordbox/        sdm rekordbox
     quality/          sdm quality
 docs/rekordbox.md     detailed Rekordbox reference

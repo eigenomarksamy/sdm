@@ -42,6 +42,38 @@ def read_basic_tags(filepath: str) -> tuple[str, str, Optional[str]]:
     return title, artist, None
 
 
+def _first(value):
+    """Unwrap a tag value to a scalar.
+
+    Vorbis comments are multi-valued, so mutagen hands back a `list` for FLAC and
+    OGG; ID3 hands back a frame object that stringifies to its text. Taking
+    `[0]` only for the list case is what keeps a FLAC title from arriving as the
+    literal string `"['Somefunkydrum']"`.
+    """
+    if isinstance(value, list):
+        return value[0] if value else None
+    return value
+
+
+def _tag(tags, *names):
+    """First non-empty value among `names`, or None.
+
+    The names are tried across container conventions on purpose — `TIT2` is ID3,
+    `title` is Vorbis, `©nam` is MP4 — because *sniffing the container does not
+    work*: every one of mutagen's tag objects has `.get`, so a previous version
+    of this function that branched on `hasattr(tags, "get")` sent FLAC down the
+    ID3 path, where `TBPM`/`TKEY` do not exist and the Vorbis lookups below were
+    unreachable. Every FLAC in a library therefore came out with no BPM, no key,
+    and a list-shaped title. Looking up all the spellings has no such failure
+    mode: the names do not collide across formats, so the first hit is right.
+    """
+    for name in names:
+        value = _first(tags.get(name))
+        if value is not None and str(value) != "":
+            return value
+    return None
+
+
 def tracks_from_files(files: list[str], *, start_idx: int = 0) -> list[Track]:
     """Build `Track` objects for the given audio files from their embedded tags.
 
@@ -73,41 +105,34 @@ def tracks_from_files(files: list[str], *, start_idx: int = 0) -> list[Track]:
             if hasattr(audio, "info") and hasattr(audio.info, "length"):
                 duration = audio.info.length
 
-            # Get title, artist, BPM, key from tags
+            # Get title, artist, BPM, key from tags. One lookup per field across
+            # every container's spelling of it — see `_tag`.
             if hasattr(audio, "tags") and audio.tags:
                 tags = audio.tags
-                # ID3 (MP3)
-                if hasattr(tags, "get"):
-                    title = tags.get("TIT2") or tags.get("Title") or "Unknown"
-                    artist = tags.get("TPE1") or tags.get("Artist") or "Unknown"
-                    bpm_tag = tags.get("TBPM")
-                    if bpm_tag and str(bpm_tag):
-                        try:
-                            bpm = float(str(bpm_tag))
-                        except (ValueError, TypeError):
-                            pass
-                    key_tag = tags.get("TKEY")
-                    if key_tag and str(key_tag):
-                        key = str(key_tag)
-                    if isinstance(title, bytes):
-                        title = title.decode("utf-8", errors="replace")
-                    if isinstance(artist, bytes):
-                        artist = artist.decode("utf-8", errors="replace")
-                # Vorbis (FLAC, OGG) and others
-                else:
-                    title = (tags.get("title") or ["Unknown"])[0] if isinstance(tags.get("title"), list) else tags.get("title") or "Unknown"
-                    artist = (tags.get("artist") or ["Unknown"])[0] if isinstance(tags.get("artist"), list) else tags.get("artist") or "Unknown"
-                    bpm_tag = tags.get("bpm")
-                    if bpm_tag:
-                        bpm_val = bpm_tag[0] if isinstance(bpm_tag, list) else bpm_tag
-                        try:
-                            bpm = float(bpm_val)
-                        except (ValueError, TypeError):
-                            pass
-                    key_tag = tags.get("initialkey") or tags.get("key")
-                    if key_tag:
-                        key_val = key_tag[0] if isinstance(key_tag, list) else key_tag
-                        key = str(key_val) or None
+
+                title = _tag(tags, "TIT2", "title", "\xa9nam") or "Unknown"
+                artist = _tag(tags, "TPE1", "artist", "\xa9ART") or "Unknown"
+
+                if isinstance(title, bytes):
+                    title = title.decode("utf-8", errors="replace")
+                if isinstance(artist, bytes):
+                    artist = artist.decode("utf-8", errors="replace")
+
+                bpm_tag = _tag(tags, "TBPM", "bpm", "tmpo")
+                if bpm_tag is not None:
+                    try:
+                        bpm = float(str(bpm_tag))
+                    except (ValueError, TypeError):
+                        pass
+                    # A "0" BPM tag is a placeholder, not a measurement. Leaving
+                    # it as 0.0 would make `require_bpm` count the track as
+                    # analyzed and then compare it against nothing.
+                    if bpm is not None and bpm <= 0:
+                        bpm = None
+
+                key_tag = _tag(tags, "TKEY", "initialkey", "key")
+                if key_tag is not None:
+                    key = str(key_tag) or None
         except Exception:
             pass
 
