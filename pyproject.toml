@@ -5,11 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sdm"
 version = "0.2.0"
-description = "Music library toolchain: acquire from Spotify, catalog local files, reconcile with Rekordbox."
+description = "Music library toolchain: catalog local files, reconcile with Rekordbox, verify audio quality."
 requires-python = ">=3.9"
 dependencies = [
     "eyed3",
     "mutagen>=1.45.0",
+    # Used only by `features/spotify` (`sdm download`), which is deprecated and
+    # not registered in cli.py. Kept declared so re-enabling that command needs
+    # no reinstall; drop them if it is ever deleted outright.
     "requests>=2.31.0",
     "tabulate",
 ]
@@ -21,11 +24,17 @@ dependencies = [
 rekordbox = [
     "pyrekordbox>=0.4.0",
 ]
+# `sdm analyze` uses pyrekordbox for its ANLZ structs only - it never opens a
+# database - but the package is the same one, so the extra is an alias rather
+# than a second entry.
+analyze = [
+    "pyrekordbox>=0.4.0",
+]
 quality = [
     "pandas",
 ]
 all = [
-    "sdm[rekordbox,quality]",
+    "sdm[rekordbox,analyze,quality]",
 ]
 
 # Not every dependency is a Python package. Fingerprinting (`sdm duplicates`,

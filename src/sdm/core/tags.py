@@ -74,6 +74,39 @@ def _tag(tags, *names):
     return None
 
 
+def read_title_artist(filepath: str) -> tuple[str, str]:
+    """Return `(title, artist)` for one file, across ID3, Vorbis and MP4.
+
+    The third reader here, and the narrowest. `read_basic_tags` is eyed3 and
+    therefore mp3-only; `tracks_from_files` reads everything but is batch-shaped
+    and *drops* files whose duration it cannot determine, which is right for the
+    duplicate prefilter and wrong for a caller that needs a name for every row.
+    This one reads two fields for one file and always answers.
+
+    It goes through `_tag`, so it inherits the cross-container lookup and cannot
+    repeat the FLAC bug documented there. Best-effort like its siblings:
+    unreadable tags yield "Unknown" rather than raising.
+    """
+    from mutagen import File
+
+    try:
+        audio = File(filepath)
+        if audio is None or not getattr(audio, "tags", None):
+            return "Unknown", "Unknown"
+
+        title = _tag(audio.tags, "TIT2", "title", "\xa9nam") or "Unknown"
+        artist = _tag(audio.tags, "TPE1", "artist", "\xa9ART") or "Unknown"
+
+        if isinstance(title, bytes):
+            title = title.decode("utf-8", errors="replace")
+        if isinstance(artist, bytes):
+            artist = artist.decode("utf-8", errors="replace")
+
+        return str(title), str(artist)
+    except Exception:
+        return "Unknown", "Unknown"
+
+
 def tracks_from_files(files: list[str], *, start_idx: int = 0) -> list[Track]:
     """Build `Track` objects for the given audio files from their embedded tags.
 

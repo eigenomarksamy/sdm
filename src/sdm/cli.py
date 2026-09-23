@@ -17,9 +17,19 @@ from typing import Optional
 
 from sdm import __version__
 from sdm.core import paths
-from sdm.features import catalog, duplicates, quality, rekordbox, spotify
+from sdm.features import analyze, catalog, duplicates, quality, rekordbox
 
-FEATURES = (spotify, catalog, duplicates, rekordbox, quality)
+FEATURES = (catalog, duplicates, rekordbox, analyze, quality)
+
+# `sdm download` (features/spotify) is deprecated and deliberately not
+# registered. The package is untouched and still imports; re-enable it by adding
+# `spotify` back to the import above and to FEATURES.
+#
+# Listed here so a deprecated command gets a straight answer instead of
+# argparse's "invalid choice", which reads like a typo rather than a decision.
+DEPRECATED_COMMANDS = {
+    "download": "features/spotify is deprecated; nothing depends on it.",
+}
 
 
 def _common_parser() -> argparse.ArgumentParser:
@@ -54,6 +64,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    # Checked before parsing, because argparse rejects an unregistered
+    # subcommand with a message that gives no hint the command once existed.
+    argv_list = list(sys.argv[1:] if argv is None else argv)
+    if argv_list and argv_list[0] in DEPRECATED_COMMANDS:
+        name = argv_list[0]
+        print(f"sdm {name} is disabled: {DEPRECATED_COMMANDS[name]}", file=sys.stderr)
+        return 2
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
