@@ -8,9 +8,9 @@ from typing import Tuple
 from dataclasses import dataclass
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, APIC, error, TPE1
-from src.cfg_mngr import Cfg
-from src.dir_mngr import (check_existing_files, remove_empty_files,
-                             resolve_path, get_unique_name_of_folder)
+from sdm.features.spotify.config import Cfg
+from sdm.features.spotify.paths import (check_existing_files, remove_empty_files,
+                                        resolve_path, get_unique_name_of_folder)
 
 @dataclass(init=True, eq=True, frozen=True)
 class Song:

@@ -2,8 +2,8 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter.ttk import Progressbar
-from src.cfg_mngr import Cfg
-from src.osd_mngr import run_gui
+from sdm.features.spotify.config import Cfg
+from sdm.features.spotify.osd import run_gui
 
 class DownloaderGUI:
 

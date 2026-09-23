@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sdm"
+version = "0.2.0"
+description = "Music library toolchain: catalog local files, reconcile with Rekordbox, verify audio quality."
+requires-python = ">=3.9"
+dependencies = [
+    "eyed3",
+    "mutagen>=1.45.0",
+    # Used only by `features/spotify` (`sdm download`), which is deprecated and
+    # not registered in cli.py. Kept declared so re-enabling that command needs
+    # no reinstall; drop them if it is ever deleted outright.
+    "requests>=2.31.0",
+    "tabulate",
+]
+
+# Heavy or platform-specific dependencies stay optional. Each feature imports
+# them inside its command handler, so `sdm --help` and unrelated subcommands
+# work without them installed.
+[project.optional-dependencies]
+rekordbox = [
+    "pyrekordbox>=0.4.0",
+]
+# `sdm analyze` uses pyrekordbox for its ANLZ structs only - it never opens a
+# database - but the package is the same one, so the extra is an alias rather
+# than a second entry.
+analyze = [
+    "pyrekordbox>=0.4.0",
+]
+quality = [
+    "pandas",
+]
+all = [
+    "sdm[rekordbox,analyze,quality]",
+]
+
+# Not every dependency is a Python package. Fingerprinting (`sdm duplicates`,
+# and `sdm rekordbox` without --duplicates-by-name) shells out to `fpcalc` from
+# Chromaprint, and `sdm quality` to `ffprobe`/`ffmpeg`. Both are binaries that
+# have to be on PATH; pip cannot install them, so they are documented here
+# rather than declared above.
+#
+#   fpcalc   https://github.com/acoustid/chromaprint/releases
+#   ffmpeg   https://ffmpeg.org/download.html
+
+[project.scripts]
+sdm = "sdm.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

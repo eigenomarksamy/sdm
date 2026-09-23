@@ -1,6 +1,6 @@
-# library_manager
+# `sdm rekordbox`
 
-Read-only tool for inspecting a Rekordbox library and finding duplicate tracks.
+Reference for the Rekordbox feature: a read-only tool for inspecting a Rekordbox library and finding duplicate tracks.
 It reads the Rekordbox database for the canonical track list and analysis
 (BPM, key, duration), and can export that metadata to CSV or report duplicates
 either by name or by audio fingerprint.
@@ -55,10 +55,11 @@ The CSV/JSON output records which rule(s) matched for each group
 
 ## Setup
 
-1. Install Python dependencies:
+1. Install the optional dependencies for this feature (`pyrekordbox`,
+   `pyacoustid`):
 
    ```ps1
-   pip install -r requirements.txt
+   pip install -e ".[rekordbox]"
    ```
 
 2. (Audio mode only) Install `fpcalc` (chromaprint) and put it on PATH. Download
@@ -80,7 +81,7 @@ With the USB mounted at `D:/`:
 ### Export track metadata to CSV
 
 ```ps1
-python -m library_manager --usb-path D:/ --export-csv library_with_analysis.csv
+sdm rekordbox --usb-path D:/ --export-csv library_with_analysis.csv
 ```
 
 Writes one row per track (`title, artist, bpm, time, key`) and exits.
@@ -88,7 +89,7 @@ Writes one row per track (`title, artist, bpm, time, key`) and exits.
 ### Duplicate report by title + artist
 
 ```ps1
-python -m library_manager --usb-path D:/ --output-dir ./out --duplicates-by-name
+sdm rekordbox --usb-path D:/ --output-dir ./out --duplicates-by-name
 ```
 
 Groups tracks with the same `(title, artist)`. Title and artist are normalized
@@ -98,20 +99,20 @@ Groups tracks with the same `(title, artist)`. Title and artist are normalized
 ### Duplicate report by audio fingerprint (default)
 
 ```ps1
-python -m library_manager --usb-path D:/ --output-dir ./out
+sdm rekordbox --usb-path D:/ --output-dir ./out
 ```
 
 Or skip the fingerprint stage for a fast, prefilter-only pass (also useful when
 `fpcalc` isn't installed yet):
 
 ```ps1
-python -m library_manager --usb-path D:/ --output-dir ./out --skip-fingerprint
+sdm rekordbox --usb-path D:/ --output-dir ./out --skip-fingerprint
 ```
 
 ### Point at a database directly
 
 ```ps1
-python -m library_manager --db-path "C:/path/to/master.db" --output-dir ./out
+sdm rekordbox --db-path "C:/path/to/master.db" --output-dir ./out
 ```
 
 ## Options
