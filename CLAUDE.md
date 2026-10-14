@@ -65,6 +65,7 @@ those flags can be typed after the subcommand — pass it straight through to
 pip install -e ".[all]"       # or .[rekordbox] / .[quality] / bare
 
 sdm catalog "C:\Users\omark\Music\postmodern"
+sdm catalog "F:\Songs" --missing-metadata   # tracks lacking a title/artist
 sdm duplicates "F:/Songs"            # needs fpcalc on PATH
 sdm duplicates "F:/Songs" --skip-fingerprint   # sizing run only, see below
 sdm rekordbox --usb-path D:/ --duplicates-by-name
@@ -104,6 +105,12 @@ identical inputs.
   `tracks_from_files` (mutagen, full `Track` incl. BPM/key/duration) and
   `read_title_artist` (mutagen, two fields for one file). All three are
   best-effort: unreadable tags yield "Unknown" rather than aborting.
+  `read_title_artist_raw` is the fourth, and `read_title_artist` is now a thin
+  wrapper over it: same read, but None for an absent field plus an error
+  string for an unreadable file. It exists for `catalog --missing-metadata`,
+  which cannot use "Unknown" — a track tagged with the literal artist "Unknown"
+  (there is one on the test clone, a vinyl-only white label) would be reported
+  as untagged, and a corrupt file as merely untagged.
   **The third is not redundant with the other two**, which is why `analyze` did
   not just call one of them: `read_basic_tags` is eyed3 and therefore mp3-only,
   and `tracks_from_files` is batch-shaped and *drops* files whose duration it
@@ -122,6 +129,12 @@ identical inputs.
   Vorbis values are lists, ID3 values are frames.
   A BPM tag of `0` is read as absent — a placeholder would otherwise satisfy
   `require_bpm` and then compare against nothing.
+  **`_tag` skips a name the container rejects, and that is load-bearing too.**
+  Vorbis comments only allow ASCII keys, so `tags.get("\xa9ART")` on a FLAC
+  *raises* `ValueError` — and the lookup only reaches the MP4 spelling when the
+  field is absent. Uncaught, any FLAC/OGG missing a title or artist lost its
+  whole read: "Unknown" for both fields in `analyze`, no BPM or key in
+  `duplicates`. The test clone has no such file, which is how it went unseen.
 - `anlz.py` — reads Rekordbox's own analysis (beat grid, phrase structure) out
   of the `PIONEER/USBANLZ/` files on a Pioneer USB. Backs `sdm analyze`; see
   `docs/analyze.md`. **It walks the ANLZ tag chain and parses one tag at a time
@@ -267,6 +280,28 @@ both missing and extra (`is_valid: False`), while
 `sdm catalog "C:\Users\...\postmodern"` reports `is_valid: True`. Same in the
 pre-refactor code. If cross-validation reports a total mismatch, check the path
 style before hunting for a real fault.
+
+**`--missing-metadata` is a second mode, not a fourth step.** It skips the
+export entirely and runs `missing_metadata.run`: list every audio file whose
+tags lack a title, an artist, or both, print them, and write
+`out/catalog/missing_metadata_<folder>.csv` (`--output-csv` overrides the name,
+same rules). A flag rather than a nested subcommand because `sdm catalog <dir>`
+has a positional that argparse would try to read as the subcommand name.
+
+It deliberately differs from the export in three ways. It covers all of
+`AUDIO_EXTS` via `iter_audio_files` (so it also skips AppleDouble stubs, which
+the export's own walk does not), because untagged files are disproportionately
+WAV/AIFF. It reads through `core.tags.read_title_artist_raw`, not eyed3, so an
+absent field is None rather than "Unknown". And a whitespace-only tag counts as
+missing. An unreadable file is reported as missing both, with the reason in the
+`error` column. The CSV is written even when empty, so a rerun after retagging
+replaces the old list. Exit code 0, or 2 for a path that is not a directory.
+
+**Measured baseline** (test clone, 3,664 files): ~8s, **36 missing** — 3 title
+only, 16 artist only, 17 both (8 mp3, 8 wav, 1 aiff), 0 unreadable. The mp3s
+missing both carry an ID3 block (encoder frames, Rekordbox's `TKEY`) with no
+`TIT2`/`TPE1`. Exactly the set `read_title_artist` answers "Unknown" for, minus
+the one literal "Unknown" artist.
 
 ### `duplicates`
 

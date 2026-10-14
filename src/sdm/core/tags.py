@@ -1,15 +1,20 @@
 """Reading metadata out of audio files.
 
-Two readers, because the callers need different things:
+Several readers, because the callers need different things:
 
 - `read_basic_tags` (eyed3) returns just title/artist and reports failures to
-  the caller. The catalog uses it — it wants an error list it can print.
+  the caller. The catalog export uses it — it wants an error list it can print.
 - `tracks_from_files` (mutagen) returns full `Track` objects including BPM, key
   and duration, across ID3 and Vorbis containers. The Rekordbox feature uses it
   as its last-resort source when no database is readable.
+- `read_title_artist` (mutagen) returns two fields for one file, any format.
+  `analyze` uses it to put a name on every row.
+- `read_title_artist_raw` is the same read without the "Unknown" substitution,
+  for the catalog's missing-metadata report, which has to tell absent from
+  unreadable.
 
-Both are best-effort by design: a file with unreadable tags yields "Unknown"
-rather than aborting the run.
+All are best-effort by design: a file with unreadable tags never aborts the
+run. The first three answer "Unknown"; the raw reader answers None.
 """
 from __future__ import annotations
 
@@ -66,12 +71,60 @@ def _tag(tags, *names):
     unreachable. Every FLAC in a library therefore came out with no BPM, no key,
     and a list-shaped title. Looking up all the spellings has no such failure
     mode: the names do not collide across formats, so the first hit is right.
+
+    A name the container cannot hold is skipped, not fatal. Vorbis comments
+    only allow ASCII keys, so asking a FLAC for MP4's `©ART` *raises*
+    `ValueError` instead of returning None — and the lookup only gets that far
+    when the field is absent. Before this was caught, a FLAC with no artist tag
+    lost its whole read: "Unknown" for both fields here, no BPM or key in
+    `tracks_from_files`, and "unreadable" in the missing-metadata report.
     """
     for name in names:
-        value = _first(tags.get(name))
+        try:
+            value = _first(tags.get(name))
+        except ValueError:
+            continue
         if value is not None and str(value) != "":
             return value
     return None
+
+
+def _text(value) -> Optional[str]:
+    """A `_tag` result as `str`, or None. MP4 freeform values arrive as bytes."""
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def read_title_artist_raw(filepath: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Return `(title, artist, error)` for one file, with None for what is absent.
+
+    `read_title_artist` is this with the gaps filled in as "Unknown" and the
+    error dropped. That substitution suits a report that wants a name on every
+    row, and defeats one asking *which* files have no name: a track tagged with
+    the literal title "Unknown" becomes indistinguishable from one with no title
+    tag, and a file that could not be parsed from one that is merely untagged.
+    The catalog's missing-metadata report needs both distinctions.
+
+    `error` is a message when the file could not be read at all, else None. A
+    readable file with no tag block is not an error — that is (None, None, None).
+    """
+    from mutagen import File
+
+    try:
+        audio = File(filepath)
+        if audio is None:
+            return None, None, "not a recognized audio file"
+        if not getattr(audio, "tags", None):
+            return None, None, None
+
+        title = _text(_tag(audio.tags, "TIT2", "title", "\xa9nam"))
+        artist = _text(_tag(audio.tags, "TPE1", "artist", "\xa9ART"))
+        return title, artist, None
+    except Exception as e:
+        return None, None, str(e) or type(e).__name__
 
 
 def read_title_artist(filepath: str) -> tuple[str, str]:
@@ -83,28 +136,13 @@ def read_title_artist(filepath: str) -> tuple[str, str]:
     duplicate prefilter and wrong for a caller that needs a name for every row.
     This one reads two fields for one file and always answers.
 
-    It goes through `_tag`, so it inherits the cross-container lookup and cannot
-    repeat the FLAC bug documented there. Best-effort like its siblings:
-    unreadable tags yield "Unknown" rather than raising.
+    It goes through `_tag` (via `read_title_artist_raw`), so it inherits the
+    cross-container lookup and cannot repeat the FLAC bug documented there.
+    Best-effort like its siblings: unreadable tags yield "Unknown" rather than
+    raising.
     """
-    from mutagen import File
-
-    try:
-        audio = File(filepath)
-        if audio is None or not getattr(audio, "tags", None):
-            return "Unknown", "Unknown"
-
-        title = _tag(audio.tags, "TIT2", "title", "\xa9nam") or "Unknown"
-        artist = _tag(audio.tags, "TPE1", "artist", "\xa9ART") or "Unknown"
-
-        if isinstance(title, bytes):
-            title = title.decode("utf-8", errors="replace")
-        if isinstance(artist, bytes):
-            artist = artist.decode("utf-8", errors="replace")
-
-        return str(title), str(artist)
-    except Exception:
-        return "Unknown", "Unknown"
+    title, artist, _ = read_title_artist_raw(filepath)
+    return title or "Unknown", artist or "Unknown"
 
 
 def tracks_from_files(files: list[str], *, start_idx: int = 0) -> list[Track]:

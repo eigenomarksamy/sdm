@@ -59,6 +59,7 @@ parts.
 | | Duplicate report | Groups rows normalizing to the same title and artist, mix suffixes stripped first | The CSV it just wrote | done |
 | | Cross-validation | Re-walks the directory and set-diffs it against the sidecar | The directory and the sidecar | partial — a forward-slash argument reports **every** file as both missing and extra |
 | | Unreadable tags | Reported per file rather than aborting the export | — | done |
+| | Missing metadata | Lists every track whose tags lack a title, an artist, or both — every audio format, not just MP3 — telling an untagged file from an unreadable one | `--missing-metadata` | done |
 | | Non-MP3 files | The rest of `AUDIO_EXTS` | — | planned — `.mp3` only |
 | | Exit code reflects the audit | Should fail the command when `is_valid` is false | — | stub — always 0, so a failed audit cannot gate a script |
 | `duplicates` | *(the command)* | Finds duplicates in a folder by what tracks **sound like** — catching renamed copies and mp3/flac pairs that name, size and hash checks miss. **Read-only** | A directory, searched recursively | done |
@@ -142,7 +143,8 @@ that produced it:
 
 ```text
 ./out/
-  catalog/     mp3_file_list_<folder>.csv + _x_val.txt sidecar
+  catalog/     mp3_file_list_<folder>.csv + _x_val.txt sidecar,
+               missing_metadata_<folder>.csv with --missing-metadata
   duplicates/  duplicates.csv, duplicates.json
   rekordbox/   duplicates.csv, duplicates.json, tracks.csv
   analyze/     analysis.csv, phrases.csv, analysis.json (+ beats.csv on request)
@@ -264,6 +266,30 @@ from it, and the two always stay together.
 > Pass the folder with **backslashes**. Cross-validation compares the sidecar's
 > paths against normalized absolute paths, so a forward-slash argument makes
 > every file look both missing and extra. A long-standing quirk, not a new one.
+
+### Missing metadata
+
+```ps1
+sdm catalog "F:\Songs" --missing-metadata
+```
+
+Instead of the export, lists every track whose tags have no title, no artist,
+or neither — the ones that will show up as blank or "Unknown" on a CDJ. Prints
+one line per track and writes `out/catalog/missing_metadata_<folder>.csv`
+(`#, missing, track name, artist, filepath, error`). `missing` is `title`,
+`artist` or `title+artist`, and the field that *is* present is filled in, so a
+track missing only its artist is still recognizable.
+
+Unlike the export it covers every audio format, not just MP3 — untagged files
+are disproportionately WAV and AIFF. A tag holding only spaces counts as
+missing; a tag reading literally "Unknown" does not, since that is what the tag
+says. A file that cannot be parsed is listed as missing both, with the reason
+in `error`, so a corrupt file is not mistaken for an untagged one. Read-only:
+it tells you what to tag and leaves the tagging to you.
+
+The CSV is rewritten on every run, even when nothing is missing, so after
+retagging, a rerun leaves no stale list behind. On the 3,664-file reference
+library it takes ~8s and finds 36.
 
 ---
 
