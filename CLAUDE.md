@@ -5,12 +5,12 @@ Guidance for Claude Code when working in this repository.
 ## What this repo is
 
 `sdm` is a personal music-library toolchain for a DJ workflow, exposed as one
-command with five isolated features over a shared core:
+command with six isolated features over a shared core:
 
 ```text
-sdm catalog  sdm duplicates  sdm rekordbox  sdm analyze  sdm quality
-     \             |               |             |           /
-      \________________________ sdm.core ____________________/
+sdm catalog  sdm duplicates  sdm rekordbox  sdm analyze  sdm quality  sdm playlist-diff
+     \             |               |             |           |            /
+      \________________________ sdm.core ________________________________/
 
 sdm download — deprecated, not registered (features/spotify)
 ```
@@ -36,6 +36,7 @@ parked, not condemned.
 | `src/sdm/features/rekordbox/` | `sdm rekordbox` — Rekordbox reader + duplicate detection |
 | `src/sdm/features/analyze/` | `sdm analyze` — beat grids + phrase structure off a Pioneer USB |
 | `src/sdm/features/quality/` | `sdm quality` — real-vs-claimed bitrate check |
+| `src/sdm/features/playlist_diff/` | `sdm playlist-diff` — Spotify playlist tracks a folder does not have. **Not** related to `features/spotify/` and imports nothing from it |
 | `docs/rekordbox.md` | Detailed Rekordbox reference |
 | `docs/analyze.md` | Detailed ANLZ / phrase-analysis reference |
 | `legacy/` | Superseded code, not imported, not expected to run |
@@ -71,6 +72,8 @@ sdm duplicates "F:/Songs" --skip-fingerprint   # sizing run only, see below
 sdm rekordbox --usb-path D:/ --duplicates-by-name
 sdm analyze D:/                      # beat grids + phrases, no database needed
 sdm quality "F:/Songs"
+sdm playlist-diff "<spotify playlist link>" "F:\Songs"   # needs $SDM_SPOTIFY_CLIENT_ID
+sdm playlist-diff "D:\export.csv" "F:\Songs"             # CSV export: no account needed
 ```
 
 `pyproject.toml` is the only dependency manifest — there is no `requirements.txt`.
@@ -450,6 +453,54 @@ bare flag. That asymmetry is deliberate: this parser has a positional
 --output-csv F:/Songs` would read the folder as the CSV name and then fail for
 a missing directory. `rekordbox` has no positional, so it is safe there.
 
+### `playlist-diff`
+
+`__init__.py` (parser) → `command.py`: load the playlist → read the folder's
+tags (`core.tags.read_title_artist_raw`, all of `AUDIO_EXTS`) → match → write
+`missing_<playlist>.csv` and `matched_<playlist>.csv` to `out/playlist-diff/`.
+**Read-only** on the playlist and the files. The first registered feature that
+touches the network or a credential.
+
+- `sources.py` — the `Playlist`/`PlaylistTrack` model both routes produce, link
+  parsing, and the CSV reader. Exporters disagree on header names and publish
+  no spec, so columns are found by alias (`CSV_COLUMNS`), and only title and
+  artist are required. Duration is read only from columns that say "ms".
+- `spotify_api.py` — PKCE login on a one-shot loopback server, then
+  `GET /playlists/{id}/items`. **Spotify's February 2026 changes are the
+  constraint everything here is shaped around:** playlist contents only for
+  playlists the user owns or collaborates on (403 otherwise — reported with the
+  CSV advice, not as a failure), app owner must have Premium, 5 users per app,
+  `/tracks` renamed `/items` and `track` renamed `item` in each entry (both
+  keys are read). Client credentials would be simpler and **cannot work**: no
+  user, so nothing is owned. No client secret exists anywhere — PKCE needs only
+  the ID, from `--client-id` or `SDM_SPOTIFY_CLIENT_ID`. Redirect URI defaults
+  to `http://127.0.0.1:8765/callback` (`SDM_SPOTIFY_REDIRECT_URI` overrides;
+  without a port, a free one is picked). Spotify rejects `localhost` by name.
+  **The token is deliberately not saved** — that needs the persistent per-user
+  location still unsettled for `dig` below; settle it there, then reuse it here.
+  Stdlib only.
+- `matching.py` — title + artist, three outcomes: `owned`, `maybe`, `missing`.
+  **`maybe` is the design, not a hedge:** a false `owned` hides a track the user
+  will never buy, so a different version (original vs a named remix) or a file
+  with no artist to confirm stays visible with the file it nearly matched.
+  `NEUTRAL_VERSION_WORDS` is what makes "Extended Mix" and "Radio Edit" the
+  same track; anything else in a version (a remixer, dub, vip) must agree.
+  Artists split on `/` first among others, because that is how 304 tags on the
+  test clone list several artists. Each file is read several ways (tags,
+  "Artist - Title" inside the title tag, cleaned filename) because the
+  library's worst-tagged files are rips that only have the name in one place.
+  Deliberately **not** `core/text.py`'s normalizers: neither handles
+  Spotify's `Title - Remix` convention or accents, and adding a third
+  strictness there would muddy the documented two. **When `dig` needs "is this
+  owned", this module moves to `core` (rule 1); it is not imported across.**
+
+**Measured** on the test clone: a full run reads 3,664 files in ~9s. A synthetic
+55-track Exportify-format playlist built from the library (owned tracks
+re-spelled Spotify-style, rips matched via title tags, fake remixes, invented
+tracks, real titles under wrong artists) came out 55/55 as constructed. That is
+a consistency check, not an accuracy figure — no real Spotify playlist has been
+run, since that needs the user's client ID.
+
 ## Conventions
 
 - Windows-first. Paths in examples use drive letters; PowerShell is the shell.
@@ -503,12 +554,20 @@ What is already decided, and what the existing structure forces:
 - New dependencies stay extras, behind the handler, per rule 2 — Rekordbox
   writes via `pyrekordbox`, transcode detection via whatever does the FFT.
   `sdm --help` must keep working with none of them installed.
-- **`dig` breaks assumptions the other five share, so do not model it on them.**
+- **`dig` breaks assumptions the local-only features share, so do not model it
+  on them.** `playlist-diff` is the nearest precedent (network, a credential,
+  a reproducibility gap: a playlist changes under it), but it makes one kind of
+  call to one service.
   It is network-first, so its results are not reproducible from local inputs; it
-  needs credentials, which nothing here handles today (environment variables,
-  never committed, and degrade to the sources that have keys rather than
-  failing); and it needs a *persistent* cache, which neither `out/` (reports)
-  nor `tmp/` (deleted on exit) is. Settle that third location before writing
+  needs credentials (environment variables, never committed, and degrade to the
+  sources that have keys rather than failing — `playlist-diff` now does this
+  for one Spotify client ID, see `SDM_SPOTIFY_CLIENT_ID`); and it needs a
+  *persistent* cache, which neither `out/` (reports) nor `tmp/` (deleted on
+  exit) is. `playlist-diff` hit the same wall for its login token and stayed
+  without one, so this location now has two consumers. Spotify's February 2026
+  changes also apply: search caps at 10 results per page, and track/artist
+  `popularity` is gone for new apps — re-read the README source table before
+  leaning on Spotify for scoring. Settle that third location before writing
   code. Each source is an adapter behind one interface, because most of the
   interesting ones are gated or closed — see the source table in `README.md`,
   and re-verify it, since the access rules move. It stays read-only against

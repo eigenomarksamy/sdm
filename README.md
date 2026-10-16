@@ -13,7 +13,8 @@ features that share a small common core:
        \______________________ sdm.core ______________________________/
         track model · normalization · tags · fingerprints · ANLZ · reports
 
- sdm download  —  deprecated, not registered (see below)
+ sdm playlist-diff  —  which tracks of a Spotify playlist a folder is missing
+ sdm download       —  deprecated, not registered (see below)
 ```
 
 Each feature is self-contained: it may use `sdm.core`, never a sibling. Heavy
@@ -97,6 +98,13 @@ parts.
 | | Non-MP3 files | The rest of `AUDIO_EXTS` | — | planned — `.mp3` only |
 | | Clipping, loudness, true peak | Peak levels, clipped-sample count, EBU R128 loudness and dynamic range | — | planned |
 | | Transcode detection | The spectral cutoff that betrays a 128 kbps rip relabelled as 320 | — | planned |
+| `playlist-diff` | *(the command)* | Lists the tracks of a Spotify playlist that a music folder does **not** have. **Read-only** on both sides | A playlist link or a CSV export of one, and a directory | done |
+| | Spotify API | Reads a playlist after a browser login (PKCE; no secret, read-only scopes) | A link, URI or ID; `--client-id` / `SDM_SPOTIFY_CLIENT_ID` | partial — **only playlists you own or collaborate on**, a Spotify-imposed limit since February 2026; the app owner needs Premium |
+| | CSV import | Any playlist, via an export from Exportify, TuneMyMusic and the like; columns found by name | A `.csv` path in place of the link | done |
+| | Matching | Title and artist, version-aware: "Extended Mix" and "Radio Edit" are the same track, a named remix is not | The folder's tags, plus "Artist - Title" read out of title tags and filenames | done |
+| | "Maybe" | A different version owned, or a file with no artist tag to confirm — listed with the file, never counted as owned | — | done |
+| | Report | `missing_<playlist>.csv` (the answer) and `matched_<playlist>.csv` (which file each owned track matched) | `--output-dir` | done |
+| | Saved login | Skipping the browser on later runs | — | planned — needs a persistent per-user location, not yet settled |
 | *new* | Library manager | Rekordbox playlists, bulk tag and metadata edits, analysis import/export | A `master.db`, and a backup of it | planned |
 | *new* | Deeper `quality` | The four `quality` rows above, together | A directory, as today | planned — extends `quality`, not a new command |
 | *new* | Serato / Traktor export | One-way export of library and playlists onto a USB another ecosystem reads | The Rekordbox library, plus a destination USB | planned |
@@ -114,7 +122,7 @@ parts.
 ## Install
 
 ```ps1
-pip install -e .              # base: catalog + duplicates
+pip install -e .              # base: catalog + duplicates + playlist-diff
 pip install -e ".[all]"       # everything
 pip install -e ".[rekordbox]" # + Rekordbox reading and fingerprinting
 pip install -e ".[analyze]"   # + beat grids and phrases off a Pioneer USB
@@ -149,6 +157,7 @@ that produced it:
   rekordbox/   duplicates.csv, duplicates.json, tracks.csv
   analyze/     analysis.csv, phrases.csv, analysis.json (+ beats.csv on request)
   quality/     the bitrate report, when --output-csv is given
+  playlist-diff/  missing_<playlist>.csv, matched_<playlist>.csv
   logs/        download.log — only while sdm download was enabled
 ./tmp/         scratch, created and removed within a single run
 ```
@@ -512,6 +521,124 @@ sdm quality "F:/Songs" --output-csv quality_report.csv
 
 ---
 
+## `sdm playlist-diff`
+
+Lists the tracks of a Spotify playlist that a music folder does **not** have —
+the shopping list between what you have been listening to and what you can
+actually play out.
+
+```ps1
+sdm playlist-diff "https://open.spotify.com/playlist/<id>" "F:\Songs"   # your own playlist
+sdm playlist-diff "D:\exports\Digging Oct.csv" "F:\Songs"              # any playlist, as CSV
+```
+
+**Read-only on both sides.** It reads the playlist and the folder's tags and
+writes only its two reports. The Spotify login asks for read-only scopes, so
+the token could not change a playlist even by mistake.
+
+### Which playlists a link works for
+
+**Only playlists you own or collaborate on.** That is Spotify's rule, not this
+tool's: since the
+[February 2026 Web API changes](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide),
+the API returns playlist contents only to their owner or a collaborator, and
+there is no app-level way around it. For anyone else's playlist — a friend's,
+a label's, an editorial one — either:
+
+- **export it to CSV** with [Exportify](https://exportify.net/),
+  [TuneMyMusic](https://www.tunemymusic.com/) or similar, and pass the file
+  instead of the link; or
+- **copy its tracks into a playlist of your own** in the Spotify app (select all,
+  *Add to playlist*), and pass that link.
+
+A CSV needs no Spotify app and no login at all. The columns are found by name —
+a title and an artist column are required, and album, duration, ISRC and track
+link are used when present — so most exporters work without configuration.
+
+### One-time setup for links
+
+1. Open the [Spotify developer dashboard](https://developer.spotify.com/dashboard)
+   and create an app. **The account needs Spotify Premium** — another of
+   Spotify's 2026 requirements for apps in development mode.
+2. Add the redirect URI **`http://127.0.0.1:8765/callback`**, character for
+   character (`localhost` is rejected by Spotify), and tick *Web API*.
+3. Copy the app's **Client ID** and make it available to sdm:
+
+   ```ps1
+   setx SDM_SPOTIFY_CLIENT_ID "<client id>"    # new terminals only
+   ```
+
+   or pass `--client-id` on each run. No client secret is needed or used.
+
+Each run then opens the browser to log in. The first time, Spotify asks you to
+approve the app; after that it is a redirect that closes itself. The login is
+not saved between runs. Pass `--no-browser` to get the URL printed instead.
+
+If port 8765 is taken, register a different loopback URI on the app and set
+`SDM_SPOTIFY_REDIRECT_URI` to it. A URI registered without a port
+(`http://127.0.0.1/callback`) lets sdm pick a free one each run.
+
+### How it matches
+
+By title and artist. A shared ID would be better, but only 1.6% of the
+reference library carries an ISRC. Both sides are normalized the same way:
+
+- **Versions.** Spotify's `Title - Extended Mix` and a tag's
+  `Title (Extended Mix)` are the same thing. Words that name a *release* —
+  original, extended, radio edit, club mix, remastered 2011 — are ignored. What
+  names a different *recording* — `Solomun Remix`, `Dub`, `VIP`,
+  `Instrumental` — has to agree.
+- **Artists.** Lists are split on `/` `,` `&` `x` `vs` `feat`, and one shared
+  artist is enough. Spotify credits remixers and featured artists as artists;
+  tags usually put them in the title.
+- **Badly tagged files.** A YouTube rip with no artist tag but a title of
+  `Artist - Title`, or a file with no tags whose name is
+  `[YT2mp3.info] - Artist - Title (3.mp3`, is still read correctly.
+
+Each playlist track comes out as one of three:
+
+| Status | Meaning |
+| --- | --- |
+| `owned` | A file agrees on title, artist and version |
+| `maybe` | The title and artist agree but the version differs, or the file has no artist to confirm it. Listed **with the file**, so you decide |
+| `missing` | Nothing in the folder comes close |
+
+`maybe` exists because the costly mistake is a false `owned`: it hides a track
+you then never go and get.
+
+### What it writes
+
+From a synthetic test playlist against the reference library — owned tracks
+renamed the way Spotify names them, fake remixes of owned tracks, and invented
+tracks:
+
+```text
+playlist 'My Test Playlist': 55 track(s)
+reading tags of 3664 audio file(s) in C:\dev_ws\test-sdm-lib-clone\pioneer-usb-full-clone
+maybe    John Beltran, Fakeperson - Belle Isle - Fakeperson Remix
+         different version: have 'John Beltran - Belle Isle'
+missing  Nonexistent Artist 0 - Invented Track Number 0
+missing  Somebody Unrelated - TiK ToK
+...
+55 track(s): 36 in the folder, 11 missing, 8 maybe (a different version, or a file with no artist tag)
+wrote out\playlist-diff\missing_My_Test_Playlist.csv
+wrote out\playlist-diff\matched_My_Test_Playlist.csv
+```
+
+`TiK ToK` is in the library, by Kesha — so under another artist's name it is
+correctly `missing`, not `owned`.
+
+- `missing_<playlist>.csv` — the answer: status, artist, title, album,
+  duration, ISRC, Spotify link, and for `maybe` the closest local file and why.
+- `matched_<playlist>.csv` — the evidence: every `owned` track and the file it
+  matched, plus which reading matched (tags, artist-in-title, filename), so a
+  wrong match can be caught rather than trusted.
+
+On the 3,664-file reference library a run takes ~9s, almost all of it reading
+tags.
+
+---
+
 ## Layout
 
 ```text
@@ -535,6 +662,7 @@ src/sdm/
     rekordbox/        sdm rekordbox
     analyze/          sdm analyze
     quality/          sdm quality
+    playlist_diff/    sdm playlist-diff
 docs/rekordbox.md     detailed Rekordbox reference
 docs/analyze.md       detailed ANLZ / phrase-analysis reference
 legacy/               superseded code, not imported
@@ -680,7 +808,7 @@ have moved.
 | **MusicBrainz** | Canonical IDs, release groups typed album/EP/single, artist relationships (producer, remixer, member of) | Free, no key, 1 req/s, User-Agent required | **The spine** — what reconciles the same release across every other source |
 | **Last.fm** | Similar artists, tags, and absolute listener/playcount numbers | Free API key | **The best similarity engine still open to new applications.** Absolute listener counts rank better than a relative popularity score |
 | **ListenBrainz / AcousticBrainz** | Open listening-derived similarity; BPM, key and mood for millions of recordings | Free; AcousticBrainz is frozen but its dumps are still downloadable | The open replacement for the Spotify endpoints that closed |
-| **Spotify** | Popularity 0–100, artist genres, new releases, and `tag:hipster` / `year:` search filters | Free, OAuth client credentials | Usable, but **not as you would expect** — see below |
+| **Spotify** | Popularity 0–100, artist genres, new releases, and `tag:hipster` / `year:` search filters | Free, OAuth client credentials. **Since February 2026** for development-mode apps: the owner needs Premium, 5 users per app, search returns at most 10 results per page, and track `popularity` and artist `popularity`/`followers` are removed | Narrower than below suggests — the popularity signal this row leads with is gone for new apps. Re-check before building |
 | **Beatport** | The DJ-relevant genre taxonomy, release dates, charts | Partner-gated OAuth | Uncertain. Assume unavailable until approved |
 | **SoundCloud** | Unofficial edits, dubs and pre-release material found nowhere else | New app registration has been closed for years | Assume unavailable |
 | **Bandcamp** | The most underground catalogue of the lot, and directly purchasable | No public API; scraping the site is against its terms | **The widest gap between value and access.** Treat as a manual step |
