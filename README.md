@@ -16,6 +16,8 @@ features that share a small common core:
  sdm playlist-diff    —  which tracks of a Spotify playlist a folder is missing
  sdm playlist-export  —  a Spotify playlist to CSV
  sdm download         —  deprecated, not registered (see below)
+
+ sdm web              —  all of the above in a browser, on this machine only
 ```
 
 Each feature is self-contained: it may use `sdm.core`, never a sibling. Heavy
@@ -110,6 +112,14 @@ parts.
 | | Columns | URI, title, artists, album, album artists, release date, disc/track number, duration, explicit, ISRC, added by/at, playlist name | — | done |
 | | Excel-safe | UTF-8 with a byte-order mark, so accented names open correctly | — | done |
 | | Round trip | The file reads straight back into `playlist-diff`, playlist name included | — | done |
+| `web` | *(the command)* | A local web interface over every command above. Not a feature itself: it runs the others and reads their reports | `--port`, `--no-browser` | done — needs the page built once with Node (`frontend/`) |
+| | Forms | One per command, generated from its own `--help` definition, so a new flag appears with no web change | — | done |
+| | Jobs | Each run a subprocess: live log, progress where the command prints `N/M`, cancel that behaves like Ctrl-C | — | done — in memory, gone on restart; the reports stay |
+| | Duplicate groups | Copies side by side, differences highlighted, A/B playback that keeps the position between copies | Any `duplicates.json` (`duplicates` or `rekordbox`) | done |
+| | Playlist diff | Missing / maybe / owned tabs, local file playback, Spotify links, copy-as-list | `missing_`/`matched_<playlist>.csv` | done |
+| | Report tables | Any CSV under `out/`, paged, filtered and sorted server-side; audio paths get a play button | — | done — files over 64 MB are paged only |
+| | Beat grid and phrase view | `analyze`'s phrases on a timeline, with playback | — | planned — opens as a table today |
+| | Access from other devices | — | — | n/a, deliberately — bound to 127.0.0.1, see below |
 | *new* | Library manager | Rekordbox playlists, bulk tag and metadata edits, analysis import/export | A `master.db`, and a backup of it | planned |
 | *new* | Deeper `quality` | The four `quality` rows above, together | A directory, as today | planned — extends `quality`, not a new command |
 | *new* | Serato / Traktor export | One-way export of library and playlists onto a USB another ecosystem reads | The Rekordbox library, plus a destination USB | planned |
@@ -147,6 +157,13 @@ installation for its fingerprint stage.
 ```ps1
 sdm --help
 sdm <command> --help
+```
+
+`sdm web` needs nothing more from pip, but the page it serves is built with
+[Node](https://nodejs.org/), once:
+
+```ps1
+cd frontend; npm install; npm run build
 ```
 
 ## Where output goes
@@ -715,6 +732,67 @@ used as given). Columns, with Exportify's names:
 
 ---
 
+## `sdm web`
+
+Every command in a browser: a form for each, its output live while it runs, and
+views of what it wrote.
+
+```ps1
+cd frontend; npm install; npm run build    # once, and after changing frontend/
+sdm web                                    # opens the browser
+sdm web --no-browser --port 9000           # or print the link instead
+sdm web --out-dir D:/reports               # reports root, as for any command
+```
+
+It prints a link containing a token, `http://127.0.0.1:8770/auth?token=...`, and
+opens it. The token changes on every launch, so open the new link after a
+restart; a bookmark of an old one says so.
+
+### What it does
+
+- **Runs commands.** The forms are built from each command's own argument
+  definitions — the same flags, defaults and help as `--help` — with a folder
+  browser for path fields and the last values remembered per command. Each run
+  shows the exact `sdm …` line it is equivalent to, ready to paste into a
+  terminal. One run per command at a time, because a second would overwrite the
+  first one's report.
+- **Streams and cancels them.** The log arrives as the command prints it, with a
+  progress bar wherever it prints `N/M` (`duplicates` does, per 25 fingerprint
+  pairs). Cancel stops a run the way Ctrl-C would, so a borrowed `fpcalc` is
+  still cleaned out of `tmp/`.
+- **Duplicate groups** (`duplicates.json`, from `sdm duplicates` or
+  `sdm rekordbox`): each group's copies side by side, with whatever differs
+  between them highlighted — title, BPM, key, format, folder. Play any copy;
+  switching to another copy in the same group **keeps the playback position**,
+  so the two files can be compared at the same moment. A run made with
+  `--skip-fingerprint` is flagged as unconfirmed.
+- **Playlist diffs** (`missing_`/`matched_<playlist>.csv`): Missing, Maybe and
+  Owned tabs; play the local file a "maybe" nearly matched to decide by ear;
+  open each missing track on Spotify; copy the list as `Artist - Title` lines.
+- **Any other CSV under `out/`** as a table, filtered and sorted on the server,
+  with a play button on every audio path.
+
+It is **read-only like the commands it runs**: there is no delete button on a
+duplicate, and nothing writes except the commands themselves.
+
+### Local only, on purpose
+
+It binds to 127.0.0.1, so nothing else on the
+network can connect. Because any website open in the same browser can still
+send requests to 127.0.0.1, every API call also needs the session cookie the
+link sets (HttpOnly, SameSite=Strict); the server checks the `Host` header
+against DNS rebinding and refuses cross-site requests. Audio is served only for
+audio file types, and reports only from under the output root.
+
+### Developing the page
+
+`npm run dev` in `frontend/` serves it with hot reload
+on Vite's port and forwards `/api` to a running `sdm web` (`SDM_WEB_BACKEND`
+overrides the default `http://127.0.0.1:8770`). Open the link `sdm web` prints
+with the port changed to Vite's.
+
+---
+
 ## Layout
 
 ```text
@@ -742,6 +820,14 @@ src/sdm/
     quality/          sdm quality
     playlist_diff/    sdm playlist-diff
     playlist_export/  sdm playlist-export
+  web/                sdm web — a front end beside cli.py, not a feature
+    schema.py         the argparse tree as forms, and form values back to argv
+    jobs.py           one subprocess per run; cancel that runs `finally`
+    child.py          what a job runs: `sdm`, stoppable like Ctrl-C
+    reports.py        listing and paging the reports under out/
+    server.py         stdlib HTTP server: the page, the JSON API, and who may use it
+    static/           the built page (gitignored; `npm run build` writes it)
+frontend/             the page's source: React + TypeScript, built with Vite
 docs/rekordbox.md     detailed Rekordbox reference
 docs/analyze.md       detailed ANLZ / phrase-analysis reference
 legacy/               superseded code, not imported

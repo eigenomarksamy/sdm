@@ -45,9 +45,20 @@ all = [
 #
 #   fpcalc   https://github.com/acoustid/chromaprint/releases
 #   ffmpeg   https://ffmpeg.org/download.html
+#
+# `sdm web` needs no extra: its server is stdlib only. The page it serves is a
+# React app built with Node from frontend/ into src/sdm/web/static/, which is
+# gitignored - run `npm install` and `npm run build` in frontend/ once, and again
+# after changing it. Without the build the server still runs and says so.
+#
+#   node     https://nodejs.org/   (build time only, not at run time)
 
 [project.scripts]
 sdm = "sdm.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# The built page, so a non-editable install carries it. Absent if never built.
+[tool.setuptools.package-data]
+"sdm.web" = ["static/*", "static/**/*"]

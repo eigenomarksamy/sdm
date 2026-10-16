@@ -15,6 +15,7 @@ sdm catalog  sdm duplicates  sdm rekordbox  sdm analyze  sdm quality
                sdm playlist-diff          sdm playlist-export
 
 sdm download — deprecated, not registered (features/spotify)
+sdm web      — a front end over all of the above, beside cli.py (sdm.web)
 ```
 
 **`sdm download` is switched off.** `spotify` is not in `FEATURES` in `cli.py`,
@@ -40,6 +41,9 @@ parked, not condemned.
 | `src/sdm/features/quality/` | `sdm quality` — real-vs-claimed bitrate check |
 | `src/sdm/features/playlist_diff/` | `sdm playlist-diff` — Spotify playlist tracks a folder does not have. **Not** related to `features/spotify/` and imports nothing from it |
 | `src/sdm/features/playlist_export/` | `sdm playlist-export` — a Spotify playlist to CSV. Same: unrelated to `features/spotify/` |
+| `src/sdm/web/` | `sdm web` — local web UI. **A front end like `cli.py`, not a feature**; imports no feature. Stdlib only |
+| `src/sdm/web/static/` | The built page. Gitignored, written by `npm run build` in `frontend/` |
+| `frontend/` | The page's source: React 19 + TypeScript 7 + Vite 8. `package-lock.json` is committed, `node_modules/` is not |
 | `docs/rekordbox.md` | Detailed Rekordbox reference |
 | `docs/analyze.md` | Detailed ANLZ / phrase-analysis reference |
 | `legacy/` | Superseded code, not imported, not expected to run |
@@ -56,6 +60,12 @@ These are the point of the current structure. Breaking either undoes it.
    `sdm --help` and unrelated subcommands work without every optional
    dependency installed. `pyrekordbox`, `pyacoustid` and `pandas` are extras,
    not base dependencies.
+
+**`sdm.web` is not an exception to rule 1, because it is not a feature.** It
+drives every command, which no feature may do, so it sits beside `cli.py` in
+`cli.FRONTENDS` rather than in `FEATURES` — and even so it imports no feature:
+it reads the parser, runs subprocesses, and reads report files. Keep it that
+way; a web view that needs a feature's logic means that logic moves to `core`.
 
 Each feature package exposes `add_parser(subparsers, parents=())` and sets
 `handler=` via `set_defaults`; `cli.py` dispatches on it and returns its value
@@ -78,6 +88,9 @@ sdm quality "F:/Songs"
 sdm playlist-diff "<spotify playlist link>" "F:\Songs"   # needs $SDM_SPOTIFY_CLIENT_ID
 sdm playlist-diff "D:\export.csv" "F:\Songs"             # CSV export: no account needed
 sdm playlist-export "<spotify playlist link>"            # -> out/playlist-export/<name>.csv
+
+cd frontend; npm install; npm run build   # builds the page into src/sdm/web/static/
+sdm web                                   # http://127.0.0.1:8770, opens the browser
 ```
 
 `pyproject.toml` is the only dependency manifest — there is no `requirements.txt`.
@@ -551,6 +564,81 @@ BOM, local files, skipped counts, `--output-csv` both forms, the 403 message,
 and the round trip into `playlist-diff` against the test clone. No real Spotify
 call has been made with a real client ID.
 
+## `sdm web` — the front end
+
+`__init__.py` (parser, argparse only) → `server.py` (stdlib `ThreadingHTTPServer`:
+the built page plus a JSON API) → `schema.py`, `jobs.py`, `reports.py`. The page
+is `frontend/`, built into `static/`. Stdlib only on the Python side, so `sdm web`
+needs no extra; Node is a build-time dependency of the page, never of the server.
+
+- `schema.py` — **the forms are the argparse tree.** `cli.build_parser()` is
+  read through `_actions`/`_choices_actions` (underscored, but what argparse's
+  own help formatter uses), so a new flag on any command appears in the UI with
+  no web change. Form values go back to an argv here and are **parsed by a fresh
+  real parser before anything runs**, with `error` patched to raise rather than
+  `sys.exit` — not `redirect_stderr`, which is process-global and this runs on
+  a server thread. `PATH_HINTS` (keyed by `dest`, consistent across features)
+  is the only thing argparse cannot say: which boxes get a Browse button. A
+  checkbox always means "pass this flag", so `--no-key-match` (store_false,
+  dest `key_must_match`) is ticked to pass it. Positionals go after `--`.
+- `jobs.py` — **one subprocess per run**, `python -m sdm.web.child`. Three
+  reasons, any one sufficient: commands report by `print`; `core.paths` roots
+  are process-global; a process can be stopped and a thread cannot. **Cancel
+  must not kill**: the child is in its own process group
+  (`CREATE_NEW_PROCESS_GROUP`), gets `CTRL_BREAK_EVENT`, and `child.py` maps
+  SIGBREAK to KeyboardInterrupt — so `finally` blocks run and a borrowed fpcalc
+  is deleted. Only a child alive after `CANCEL_GRACE` (15s, longer than
+  `_purge`'s retries) is killed. The flip side of the own-group: a child does
+  not see the Ctrl-C that stops the server, so `shutdown()` cancels every
+  running job, and `serve` calls it in a `finally`. `PYTHONIOENCODING=utf-8`
+  on the child, or a piped stdout on Windows uses the ANSI code page and dies on
+  the first track name outside it. Outputs are the `wrote <path>` lines every
+  command prints, plus anything under `out/<command>/` touched during the run
+  (catalog's exporter prints dicts, not "wrote"). One run per command at a
+  time — a second would overwrite the first's report. Jobs are in memory.
+- `reports.py` — generic on purpose: CSV as rows, anything else as bytes. The
+  dedicated views interpret report formats **in the browser** from each
+  feature's file names and columns; nothing here imports a feature. CSVs under
+  64 MB are parsed once and cached (filter, numeric-aware sort, blanks last in
+  either direction); larger ones (`--export-beats`) are paged by streaming only.
+- `server.py` — **who else can call the API is the design question**: it starts
+  commands and reads files, and any website in the same browser can send
+  requests to 127.0.0.1. Four layers: bound to 127.0.0.1; a per-launch token
+  exchanged at `/auth` for an HttpOnly SameSite=Strict cookie (named per port —
+  cookies ignore ports); a `Host` check against DNS rebinding; and refusal of
+  `Sec-Fetch-Site` other than same-origin/none plus a foreign `Origin` on
+  POST, because SameSite treats every port on 127.0.0.1 as one site. Do not
+  add CORS headers or an `0.0.0.0` bind without redesigning this; LAN access
+  was considered and declined. Served narrowly: reports only under the out root
+  or a path a job reported writing, audio only in `AUDIO_EXTS` (with Range, for
+  seeking), directory *names* for the path picker. Two Windows traps fixed
+  here: `mimetypes` reads the registry, where `.js` is often `text/plain` and
+  breaks module scripts, so static types are hardcoded; and `SO_REUSEADDR`
+  lets a second socket share a taken port on Windows, so it is off there and
+  `SO_EXCLUSIVEADDRUSE` is on. Default port 8770, never 8765 (Spotify's login).
+- `frontend/` — hash routing (one page, no server routes), one `<audio>` for
+  the whole page (`player.tsx`), types mirroring the API in `api.ts`. Views:
+  `DuplicatesView` (any `duplicates.json`; A/B keeps the playback position
+  within a group; warns on metadata-only groups), `PlaylistDiffView` (only for
+  files in a `playlist-diff` folder — catalog's `missing_metadata_*.csv` has the
+  same shape of name — and it checks the columns, falling back to a table),
+  `TableView` for everything else. A play button appears only on a path that is
+  absolute on this machine, because analyze's `device_path` (`/Contents/…mp3`)
+  is a USB path the server cannot open. `npm run dev` proxies `/api` and `/auth`
+  to a running `sdm web` and rewrites `Origin`, or the POST check refuses it.
+
+**Read-only like what it runs.** No view deletes or moves a file, and none
+should: the commands' read-only contracts are the point.
+
+**Verified** with no browser tool in the loop: an HTTP test script against a
+live server (auth, every refusal above, paging/filter/sort, Range audio, path
+traversal, a real `catalog --missing-metadata` job and its outputs), a cancel of
+a real `duplicates` run mid-fingerprint with a borrowed fpcalc (cancelled in
+0.3s, `tmp/` empty after), `shutdown()` with a job running, the Vite proxy, and
+headless Edge via `puppeteer-core` for every view in light, dark and phone
+width (A/B position carry-over measured, zero console errors). Not yet done: a
+Spotify login driven from the UI with a real client ID.
+
 ## Conventions
 
 - Windows-first. Paths in examples use drive letters; PowerShell is the shell.
@@ -561,7 +649,12 @@ call has been made with a real client ID.
   `exporter.py`) is looser and untyped. Match the surrounding file rather than
   upgrading it in place.
 - Progress is reported by passing a `progress`/`log` callable, not by printing
-  from library code. Keep `print` in `command.py` / handlers.
+  from library code. Keep `print` in `command.py` / handlers. `sdm web` relies
+  on this: it shows whatever a command prints, draws a progress bar from any
+  `N/M` in it, and finds reports by `wrote <path>` — keep printing those.
+- `frontend/` is strict TypeScript with no linter; `npm run build` type-checks
+  first. Match its existing style (2-space, double quotes, function
+  components, a comment saying *why* above anything non-obvious).
 - `.gitignore` excludes `*.csv`, `*.txt`, `out/`, `tmp/`, `deprecated/`, and
   `sync*.json`. **No CSV or TXT file in this repo is tracked** — every catalog
   export, report and sidecar you see is a local artifact.

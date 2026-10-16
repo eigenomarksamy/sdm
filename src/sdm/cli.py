@@ -15,7 +15,7 @@ import argparse
 import sys
 from typing import Optional
 
-from sdm import __version__
+from sdm import __version__, web
 from sdm.core import paths
 from sdm.features import (
     analyze,
@@ -28,6 +28,10 @@ from sdm.features import (
 )
 
 FEATURES = (catalog, duplicates, rekordbox, analyze, quality, playlist_diff, playlist_export)
+
+# Front ends over FEATURES rather than features themselves: `sdm web` drives
+# every command, which rule 1 forbids a feature to do. Registered the same way.
+FRONTENDS = (web,)
 
 # `sdm download` (features/spotify) is deprecated and deliberately not
 # registered. The package is untouched and still imports; re-enable it by adding
@@ -65,8 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     common = _common_parser()
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
-    for feature in FEATURES:
-        feature.add_parser(subparsers, parents=[common])
+    for module in FEATURES + FRONTENDS:
+        module.add_parser(subparsers, parents=[common])
 
     return parser
 
