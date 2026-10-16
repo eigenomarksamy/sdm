@@ -17,9 +17,17 @@ from typing import Optional
 
 from sdm import __version__
 from sdm.core import paths
-from sdm.features import analyze, catalog, duplicates, playlist_diff, quality, rekordbox
+from sdm.features import (
+    analyze,
+    catalog,
+    duplicates,
+    playlist_diff,
+    playlist_export,
+    quality,
+    rekordbox,
+)
 
-FEATURES = (catalog, duplicates, rekordbox, analyze, quality, playlist_diff)
+FEATURES = (catalog, duplicates, rekordbox, analyze, quality, playlist_diff, playlist_export)
 
 # `sdm download` (features/spotify) is deprecated and deliberately not
 # registered. The package is untouched and still imports; re-enable it by adding

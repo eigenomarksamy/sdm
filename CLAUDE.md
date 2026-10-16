@@ -5,12 +5,14 @@ Guidance for Claude Code when working in this repository.
 ## What this repo is
 
 `sdm` is a personal music-library toolchain for a DJ workflow, exposed as one
-command with six isolated features over a shared core:
+command with seven isolated features over a shared core:
 
 ```text
-sdm catalog  sdm duplicates  sdm rekordbox  sdm analyze  sdm quality  sdm playlist-diff
-     \             |               |             |           |            /
-      \________________________ sdm.core ________________________________/
+sdm catalog  sdm duplicates  sdm rekordbox  sdm analyze  sdm quality
+     \             |               |             |           /
+      \________________________ sdm.core ____________________/
+                                /        \
+               sdm playlist-diff          sdm playlist-export
 
 sdm download — deprecated, not registered (features/spotify)
 ```
@@ -37,6 +39,7 @@ parked, not condemned.
 | `src/sdm/features/analyze/` | `sdm analyze` — beat grids + phrase structure off a Pioneer USB |
 | `src/sdm/features/quality/` | `sdm quality` — real-vs-claimed bitrate check |
 | `src/sdm/features/playlist_diff/` | `sdm playlist-diff` — Spotify playlist tracks a folder does not have. **Not** related to `features/spotify/` and imports nothing from it |
+| `src/sdm/features/playlist_export/` | `sdm playlist-export` — a Spotify playlist to CSV. Same: unrelated to `features/spotify/` |
 | `docs/rekordbox.md` | Detailed Rekordbox reference |
 | `docs/analyze.md` | Detailed ANLZ / phrase-analysis reference |
 | `legacy/` | Superseded code, not imported, not expected to run |
@@ -74,6 +77,7 @@ sdm analyze D:/                      # beat grids + phrases, no database needed
 sdm quality "F:/Songs"
 sdm playlist-diff "<spotify playlist link>" "F:\Songs"   # needs $SDM_SPOTIFY_CLIENT_ID
 sdm playlist-diff "D:\export.csv" "F:\Songs"             # CSV export: no account needed
+sdm playlist-export "<spotify playlist link>"            # -> out/playlist-export/<name>.csv
 ```
 
 `pyproject.toml` is the only dependency manifest — there is no `requirements.txt`.
@@ -198,8 +202,40 @@ identical inputs.
   itself need a dependency that is missing. `CHROMAPRINT_VERSION` is pinned
   rather than resolved from the "latest release" API so a run cannot silently
   change binaries.
+- `playlist.py` — the `Playlist`/`PlaylistTrack` model, playlist-link parsing,
+  and the playlist CSV format **in both directions**: `read_playlist_csv`
+  (lenient — columns found by alias, only title and artist required, because
+  exporters disagree on header names and publish no spec) and
+  `write_playlist_csv` (fixed — Exportify's column names plus `Playlist Name`).
+  **They share a file so they cannot drift:** an export must read back into
+  `playlist-diff`, and every column the reader uses is spelled as one of its
+  aliases. Track references are held as Spotify URIs and turned into links on
+  demand (`url`), so a URI, bare ID or open.spotify.com link in a CSV all land
+  the same way. Export-only fields (release date, added at, …) stay at their
+  defaults on a CSV read back; nothing that reads needs them. Stdlib only.
+- `spotify.py` — PKCE login on a one-shot loopback server, then
+  `GET /playlists/{id}/items`. Shared by `playlist-diff` and `playlist-export`.
+  **Spotify's February 2026 changes are the constraint everything here is
+  shaped around:** playlist contents only for playlists the user owns or
+  collaborates on, app owner must have Premium, 5 users per app, `/tracks`
+  renamed `/items` and `track` renamed `item` in each entry (both keys are
+  read). A 403 raises `PlaylistNotAccessible`, a `SpotifyError` subclass, with
+  a neutral message — **the advice is the caller's**, because it differs:
+  `playlist-diff` says "export it to CSV with Exportify", `playlist-export`
+  cannot say that about itself (same API, same 403) and says "copy it into a
+  playlist of your own". Client credentials would be simpler and **cannot
+  work**: no user, so nothing is owned. No client secret exists anywhere —
+  PKCE needs only the ID (`SDM_SPOTIFY_CLIENT_ID`). Redirect URI defaults to
+  `http://127.0.0.1:8765/callback` (`SDM_SPOTIFY_REDIRECT_URI` overrides;
+  without a port, a free one is picked). Spotify rejects `localhost` by name.
+  **The token is deliberately not saved** — that needs the persistent per-user
+  location still unsettled for `dig` below; settle it there, then reuse it here.
+  Stdlib only; like `fpcalc_fetch.py`, a core module that touches the network.
 - `report.py` — all CSV/JSON/sidecar writers. `newline=""` here is what stops
-  the `csv` module writing blank lines between rows on Windows.
+  the `csv` module writing blank lines between rows on Windows. `write_csv`
+  takes `encoding="utf-8-sig"` for a file meant to be opened in Excel, which
+  reads BOM-less UTF-8 as ANSI and mangles every accented name; only the
+  playlist export uses it — the reports keep plain UTF-8, unchanged.
   `write_duplicate_report` is the shared duplicate CSV+JSON writer, so a folder
   scan and a Rekordbox run emit the same shape and can be diffed against each
   other.
@@ -455,30 +491,15 @@ a missing directory. `rekordbox` has no positional, so it is safe there.
 
 ### `playlist-diff`
 
-`__init__.py` (parser) → `command.py`: load the playlist → read the folder's
-tags (`core.tags.read_title_artist_raw`, all of `AUDIO_EXTS`) → match → write
-`missing_<playlist>.csv` and `matched_<playlist>.csv` to `out/playlist-diff/`.
-**Read-only** on the playlist and the files. The first registered feature that
-touches the network or a credential.
+`__init__.py` (parser) → `command.py`: load the playlist (a CSV path via
+`core.playlist.read_playlist_csv`, or a link via `core.spotify`) → read the
+folder's tags (`core.tags.read_title_artist_raw`, all of `AUDIO_EXTS`) → match →
+write `missing_<playlist>.csv` and `matched_<playlist>.csv` to
+`out/playlist-diff/`. **Read-only** on the playlist and the files. The Spotify
+client and the playlist model started out in this package and moved to core
+when `playlist-export` needed them (rule 1); a 403 from Spotify is reported
+here with the CSV advice, not as a failure.
 
-- `sources.py` — the `Playlist`/`PlaylistTrack` model both routes produce, link
-  parsing, and the CSV reader. Exporters disagree on header names and publish
-  no spec, so columns are found by alias (`CSV_COLUMNS`), and only title and
-  artist are required. Duration is read only from columns that say "ms".
-- `spotify_api.py` — PKCE login on a one-shot loopback server, then
-  `GET /playlists/{id}/items`. **Spotify's February 2026 changes are the
-  constraint everything here is shaped around:** playlist contents only for
-  playlists the user owns or collaborates on (403 otherwise — reported with the
-  CSV advice, not as a failure), app owner must have Premium, 5 users per app,
-  `/tracks` renamed `/items` and `track` renamed `item` in each entry (both
-  keys are read). Client credentials would be simpler and **cannot work**: no
-  user, so nothing is owned. No client secret exists anywhere — PKCE needs only
-  the ID, from `--client-id` or `SDM_SPOTIFY_CLIENT_ID`. Redirect URI defaults
-  to `http://127.0.0.1:8765/callback` (`SDM_SPOTIFY_REDIRECT_URI` overrides;
-  without a port, a free one is picked). Spotify rejects `localhost` by name.
-  **The token is deliberately not saved** — that needs the persistent per-user
-  location still unsettled for `dig` below; settle it there, then reuse it here.
-  Stdlib only.
 - `matching.py` — title + artist, three outcomes: `owned`, `maybe`, `missing`.
   **`maybe` is the design, not a hedge:** a false `owned` hides a track the user
   will never buy, so a different version (original vs a named remix) or a file
@@ -500,6 +521,35 @@ re-spelled Spotify-style, rips matched via title tags, fake remixes, invented
 tracks, real titles under wrong artists) came out 55/55 as constructed. That is
 a consistency check, not an accuracy figure — no real Spotify playlist has been
 run, since that needs the user's client ID.
+
+### `playlist-export`
+
+`__init__.py` (parser) → `command.py`: parse the link → login → fetch →
+`core.playlist.write_playlist_csv` to `out/playlist-export/<playlist>.csv`
+(`--output-csv` through `resolve_output`, same rules as everywhere). The whole
+feature is messages and a default path; everything that knows Spotify or the
+CSV format is in core, shared with `playlist-diff`. **Read-only** against
+Spotify — read-only scopes, one file written.
+
+**Its other job is to stand in for the missing saved login.** Every run logs
+in, so the workflow for repeated diffs is export once, then
+`playlist-diff <the csv> <folder>` as often as needed. That only works because
+the writer and reader share `core/playlist.py`; a change to either must keep
+the round trip (export → read back → same titles, artists, durations, URIs,
+playlist name).
+
+It **cannot** export someone else's playlist — same endpoint, same 403 — so it
+must not suggest itself as the way around `playlist-diff`'s 403. Its own advice
+is to copy the tracks into an owned playlist.
+
+Podcast episodes and tracks Spotify removed (null `item`) are skipped and
+counted, not written. Local files are written, with their `spotify:local:` URI.
+
+**Verified** against a simulated API only (`_get` and `login` patched, the real
+`fetch_playlist` paginating two pages): every column, quotes and accents, the
+BOM, local files, skipped counts, `--output-csv` both forms, the 403 message,
+and the round trip into `playlist-diff` against the test clone. No real Spotify
+call has been made with a real client ID.
 
 ## Conventions
 
@@ -555,16 +605,17 @@ What is already decided, and what the existing structure forces:
   writes via `pyrekordbox`, transcode detection via whatever does the FFT.
   `sdm --help` must keep working with none of them installed.
 - **`dig` breaks assumptions the local-only features share, so do not model it
-  on them.** `playlist-diff` is the nearest precedent (network, a credential,
-  a reproducibility gap: a playlist changes under it), but it makes one kind of
-  call to one service.
+  on them.** `playlist-diff`/`playlist-export` are the nearest precedent
+  (network, a credential, a reproducibility gap: a playlist changes under
+  them), but they make one kind of call to one service. `core/spotify.py` is
+  already the Spotify adapter `dig` would start from.
   It is network-first, so its results are not reproducible from local inputs; it
   needs credentials (environment variables, never committed, and degrade to the
-  sources that have keys rather than failing — `playlist-diff` now does this
+  sources that have keys rather than failing — `core/spotify.py` now does this
   for one Spotify client ID, see `SDM_SPOTIFY_CLIENT_ID`); and it needs a
   *persistent* cache, which neither `out/` (reports) nor `tmp/` (deleted on
-  exit) is. `playlist-diff` hit the same wall for its login token and stayed
-  without one, so this location now has two consumers. Spotify's February 2026
+  exit) is. The Spotify login token hit the same wall and stayed unsaved, so
+  this location now has two consumers. Spotify's February 2026
   changes also apply: search caps at 10 results per page, and track/artist
   `popularity` is gone for new apps — re-read the README source table before
   leaning on Spotify for scoring. Settle that third location before writing

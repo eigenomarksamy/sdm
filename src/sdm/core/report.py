@@ -16,9 +16,20 @@ if TYPE_CHECKING:
     from sdm.core.duplicates import DuplicateGroup
 
 
-def write_csv(path: str, header: Sequence[str], rows: Iterable[Sequence[Any]]) -> None:
-    """Write `header` followed by `rows` as UTF-8 CSV."""
-    with open(path, "w", newline="", encoding="utf-8") as f:
+def write_csv(
+    path: str,
+    header: Sequence[str],
+    rows: Iterable[Sequence[Any]],
+    *,
+    encoding: str = "utf-8",
+) -> None:
+    """Write `header` followed by `rows` as UTF-8 CSV.
+
+    Pass `encoding="utf-8-sig"` for a file meant to be opened in Excel, which
+    reads a UTF-8 CSV without a byte-order mark as the ANSI code page and turns
+    "Súcubo" into "SÃºcubo".
+    """
+    with open(path, "w", newline="", encoding=encoding) as f:
         writer = csv.writer(f)
         writer.writerow(header)
         for row in rows:

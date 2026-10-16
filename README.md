@@ -13,8 +13,9 @@ features that share a small common core:
        \______________________ sdm.core ______________________________/
         track model · normalization · tags · fingerprints · ANLZ · reports
 
- sdm playlist-diff  —  which tracks of a Spotify playlist a folder is missing
- sdm download       —  deprecated, not registered (see below)
+ sdm playlist-diff    —  which tracks of a Spotify playlist a folder is missing
+ sdm playlist-export  —  a Spotify playlist to CSV
+ sdm download         —  deprecated, not registered (see below)
 ```
 
 Each feature is self-contained: it may use `sdm.core`, never a sibling. Heavy
@@ -104,7 +105,11 @@ parts.
 | | Matching | Title and artist, version-aware: "Extended Mix" and "Radio Edit" are the same track, a named remix is not | The folder's tags, plus "Artist - Title" read out of title tags and filenames | done |
 | | "Maybe" | A different version owned, or a file with no artist tag to confirm — listed with the file, never counted as owned | — | done |
 | | Report | `missing_<playlist>.csv` (the answer) and `matched_<playlist>.csv` (which file each owned track matched) | `--output-dir` | done |
-| | Saved login | Skipping the browser on later runs | — | planned — needs a persistent per-user location, not yet settled |
+| | Saved login | Skipping the browser on later runs | — | planned — needs a persistent per-user location, not yet settled. Meanwhile, `playlist-export` once and diff the CSV |
+| `playlist-export` | *(the command)* | Writes a Spotify playlist to CSV with Exportify's column names. **Read-only** against Spotify | A playlist link, URI or ID; `--output-csv` | partial — **only playlists you own or collaborate on**, the same API limit as `playlist-diff` |
+| | Columns | URI, title, artists, album, album artists, release date, disc/track number, duration, explicit, ISRC, added by/at, playlist name | — | done |
+| | Excel-safe | UTF-8 with a byte-order mark, so accented names open correctly | — | done |
+| | Round trip | The file reads straight back into `playlist-diff`, playlist name included | — | done |
 | *new* | Library manager | Rekordbox playlists, bulk tag and metadata edits, analysis import/export | A `master.db`, and a backup of it | planned |
 | *new* | Deeper `quality` | The four `quality` rows above, together | A directory, as today | planned — extends `quality`, not a new command |
 | *new* | Serato / Traktor export | One-way export of library and playlists onto a USB another ecosystem reads | The Rekordbox library, plus a destination USB | planned |
@@ -122,7 +127,7 @@ parts.
 ## Install
 
 ```ps1
-pip install -e .              # base: catalog + duplicates + playlist-diff
+pip install -e .              # base: catalog, duplicates, playlist-diff/-export
 pip install -e ".[all]"       # everything
 pip install -e ".[rekordbox]" # + Rekordbox reading and fingerprinting
 pip install -e ".[analyze]"   # + beat grids and phrases off a Pioneer USB
@@ -158,6 +163,7 @@ that produced it:
   analyze/     analysis.csv, phrases.csv, analysis.json (+ beats.csv on request)
   quality/     the bitrate report, when --output-csv is given
   playlist-diff/  missing_<playlist>.csv, matched_<playlist>.csv
+  playlist-export/  <playlist>.csv
   logs/        download.log — only while sdm download was enabled
 ./tmp/         scratch, created and removed within a single run
 ```
@@ -521,41 +527,25 @@ sdm quality "F:/Songs" --output-csv quality_report.csv
 
 ---
 
-## `sdm playlist-diff`
+## Spotify access
 
-Lists the tracks of a Spotify playlist that a music folder does **not** have —
-the shopping list between what you have been listening to and what you can
-actually play out.
+`sdm playlist-diff` (with a link) and `sdm playlist-export` read playlists
+through Spotify's Web API, logged in as you. Both share this setup and these
+limits.
 
-```ps1
-sdm playlist-diff "https://open.spotify.com/playlist/<id>" "F:\Songs"   # your own playlist
-sdm playlist-diff "D:\exports\Digging Oct.csv" "F:\Songs"              # any playlist, as CSV
-```
-
-**Read-only on both sides.** It reads the playlist and the folder's tags and
-writes only its two reports. The Spotify login asks for read-only scopes, so
-the token could not change a playlist even by mistake.
-
-### Which playlists a link works for
+### Which playlists work
 
 **Only playlists you own or collaborate on.** That is Spotify's rule, not this
 tool's: since the
 [February 2026 Web API changes](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide),
 the API returns playlist contents only to their owner or a collaborator, and
 there is no app-level way around it. For anyone else's playlist — a friend's,
-a label's, an editorial one — either:
+a label's, an editorial one — **copy its tracks into a playlist of your own** in
+the Spotify app (select all, *Add to playlist*) and use that link, or export it
+with a third-party tool such as [Exportify](https://exportify.net/) and give
+`playlist-diff` the CSV.
 
-- **export it to CSV** with [Exportify](https://exportify.net/),
-  [TuneMyMusic](https://www.tunemymusic.com/) or similar, and pass the file
-  instead of the link; or
-- **copy its tracks into a playlist of your own** in the Spotify app (select all,
-  *Add to playlist*), and pass that link.
-
-A CSV needs no Spotify app and no login at all. The columns are found by name —
-a title and an artist column are required, and album, duration, ISRC and track
-link are used when present — so most exporters work without configuration.
-
-### One-time setup for links
+### One-time setup
 
 1. Open the [Spotify developer dashboard](https://developer.spotify.com/dashboard)
    and create an app. **The account needs Spotify Premium** — another of
@@ -572,11 +562,52 @@ link are used when present — so most exporters work without configuration.
 
 Each run then opens the browser to log in. The first time, Spotify asks you to
 approve the app; after that it is a redirect that closes itself. The login is
-not saved between runs. Pass `--no-browser` to get the URL printed instead.
+not saved between runs — which is what `playlist-export` is good for: export
+once, then diff the CSV with no login. Pass `--no-browser` to get the URL
+printed instead.
 
 If port 8765 is taken, register a different loopback URI on the app and set
 `SDM_SPOTIFY_REDIRECT_URI` to it. A URI registered without a port
 (`http://127.0.0.1/callback`) lets sdm pick a free one each run.
+
+The login asks only for read-only scopes (`playlist-read-private`,
+`playlist-read-collaborative`), so the token could not change a playlist even
+by mistake.
+
+---
+
+## `sdm playlist-diff`
+
+Lists the tracks of a Spotify playlist that a music folder does **not** have —
+the shopping list between what you have been listening to and what you can
+actually play out.
+
+```ps1
+sdm playlist-diff "https://open.spotify.com/playlist/<id>" "F:\Songs"   # your own playlist
+sdm playlist-diff "D:\exports\Digging Oct.csv" "F:\Songs"              # any playlist, as CSV
+```
+
+**Read-only on both sides.** It reads the playlist and the folder's tags and
+writes only its two reports. The Spotify login asks for read-only scopes, so
+the token could not change a playlist even by mistake.
+
+### Link or CSV
+
+A **link** goes through the Spotify API, so it needs the one-time setup in
+[Spotify access](#spotify-access) and works only for playlists you own or
+collaborate on.
+
+A **CSV** needs no Spotify app and no login at all, and covers any playlist:
+
+- one written by [`sdm playlist-export`](#sdm-playlist-export) — export once,
+  then diff the file as often as you like without logging in again;
+- one from [Exportify](https://exportify.net/),
+  [TuneMyMusic](https://www.tunemymusic.com/) or similar, which is the way to
+  compare **someone else's** playlist, since the API will not read it for you.
+
+Columns are found by name — a title and an artist column are required, and
+album, duration, ISRC and track link are used when present — so most exporters
+work without configuration.
 
 ### How it matches
 
@@ -639,6 +670,51 @@ tags.
 
 ---
 
+## `sdm playlist-export`
+
+Writes a Spotify playlist to CSV — every track, with its artists, album,
+release date, duration, ISRC and when it was added.
+
+```ps1
+sdm playlist-export "https://open.spotify.com/playlist/<id>"
+sdm playlist-export "<link>" --output-csv D:\exports\digging.csv
+```
+
+Needs the [Spotify access](#spotify-access) setup, and works for playlists you
+own or collaborate on — the same API and the same limit as a `playlist-diff`
+link. **Read-only**: it reads the playlist and writes one file.
+
+From a test run against a simulated Spotify API (two pages, seven entries, one
+podcast episode and one removed track); a real run first prints the login URL:
+
+```text
+read 4 of 7 playlist entries
+exported 5 track(s) from 'Digging: Oct / 2026' by Omar; 2 skipped (podcast episodes or tracks no longer on Spotify)
+wrote out\playlist-export\Digging_Oct_2026.csv
+compare it with a folder, no login needed: sdm playlist-diff "out\playlist-export\Digging_Oct_2026.csv" <folder>
+```
+
+The file goes to `out/playlist-export/<playlist name>.csv` unless
+`--output-csv` says otherwise (a bare filename stays in that folder, a path is
+used as given). Columns, with Exportify's names:
+
+`Track URI`, `Track Name`, `Artist Name(s)`, `Album Name`,
+`Album Artist Name(s)`, `Album Release Date`, `Disc Number`, `Track Number`,
+`Track Duration (ms)`, `Explicit`, `ISRC`, `Added By`, `Added At`,
+`Playlist Name`
+
+- Several artists are joined with a comma and a space — readable in a
+  spreadsheet.
+- The file carries a UTF-8 byte-order mark so Excel shows accented names
+  correctly instead of `SÃºcubo`.
+- Local files added to the playlist in the Spotify app are included, with a
+  `spotify:local:` URI. Podcast episodes and tracks Spotify has removed are
+  skipped and counted.
+- **It reads straight back into `playlist-diff`**, with the playlist's real name
+  kept for the report filenames.
+
+---
+
 ## Layout
 
 ```text
@@ -653,6 +729,8 @@ src/sdm/
     fingerprint.py    chromaprint via fpcalc
     fpcalc_fetch.py   borrows an fpcalc for one run when none is installed
     anlz.py           Rekordbox ANLZ reader — beat grids and phrase structure
+    playlist.py       playlist model + its CSV format, read and write
+    spotify.py        Spotify login (PKCE) and playlist reading
     report.py         CSV/JSON/sidecar writers — how a file is written
     paths.py          out/ and tmp/ resolution — where it is written
   features/
@@ -663,6 +741,7 @@ src/sdm/
     analyze/          sdm analyze
     quality/          sdm quality
     playlist_diff/    sdm playlist-diff
+    playlist_export/  sdm playlist-export
 docs/rekordbox.md     detailed Rekordbox reference
 docs/analyze.md       detailed ANLZ / phrase-analysis reference
 legacy/               superseded code, not imported

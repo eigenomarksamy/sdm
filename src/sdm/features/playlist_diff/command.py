@@ -9,29 +9,30 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 from typing import Optional
 
 from sdm.core.paths import out_dir
-from sdm.core.report import ensure_dir, write_csv
-from sdm.core.tags import read_title_artist_raw
-from sdm.core.track import iter_audio_files
-from sdm.features.playlist_diff.matching import LocalIndex, LocalTrack, Match
-from sdm.features.playlist_diff.sources import (
+from sdm.core.playlist import (
     Playlist,
     PlaylistSourceError,
     PlaylistTrack,
     parse_playlist_ref,
-    read_csv,
+    playlist_slug,
+    read_playlist_csv,
 )
-from sdm.features.playlist_diff.spotify_api import (
+from sdm.core.report import ensure_dir, write_csv
+from sdm.core.spotify import (
     CLIENT_ID_ENV,
+    PlaylistNotAccessible,
     SpotifyError,
     fetch_playlist,
     login,
     resolve_client_id,
 )
+from sdm.core.tags import read_title_artist_raw
+from sdm.core.track import iter_audio_files
+from sdm.features.playlist_diff.matching import LocalIndex, LocalTrack
 
 
 def run(args: argparse.Namespace) -> int:
@@ -45,6 +46,15 @@ def run(args: argparse.Namespace) -> int:
     except PlaylistSourceError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except PlaylistNotAccessible as exc:
+        # `sdm playlist-export` is no way round this: it reads the same API.
+        print(
+            f"error: {exc} Export it to CSV with a tool that can still read it "
+            "(Exportify, TuneMyMusic) and pass the file instead, or copy its "
+            "tracks into a playlist of your own.",
+            file=sys.stderr,
+        )
+        return 1
     except SpotifyError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -78,7 +88,7 @@ def run(args: argparse.Namespace) -> int:
     )
 
     report_dir = ensure_dir(args.output_dir) if args.output_dir else out_dir("playlist-diff")
-    slug = _slug(playlist.name)
+    slug = playlist_slug(playlist.name)
     missing_path = os.path.join(report_dir, f"missing_{slug}.csv")
     matched_path = os.path.join(report_dir, f"matched_{slug}.csv")
 
@@ -110,7 +120,7 @@ def _load_playlist(args: argparse.Namespace) -> Optional[Playlist]:
     """The playlist from a CSV path or a Spotify reference. None after printing a usage error."""
     source = args.playlist
     if os.path.isfile(source):
-        return read_csv(source)
+        return read_playlist_csv(source)
 
     playlist_id = parse_playlist_ref(source)
     if playlist_id is None:
@@ -123,7 +133,7 @@ def _load_playlist(args: argparse.Namespace) -> Optional[Playlist]:
         print(
             f"error: reading a playlist link needs a Spotify app client ID. Set "
             f"{CLIENT_ID_ENV} or pass --client-id; the one-time setup is in the "
-            "README under `sdm playlist-diff`. Or pass a CSV export of the "
+            "README under \"Spotify access\". Or pass a CSV export of the "
             "playlist, which needs no account.",
             file=sys.stderr,
         )
@@ -142,8 +152,3 @@ def _duration(ms: Optional[int]) -> str:
         return ""
     seconds = round(ms / 1000)
     return f"{seconds // 60}:{seconds % 60:02d}"
-
-
-def _slug(name: str) -> str:
-    """A playlist name as a filename fragment. Unicode letters survive; NTFS takes them."""
-    return re.sub(r"[^\w-]+", "_", name).strip("_")[:60] or "playlist"

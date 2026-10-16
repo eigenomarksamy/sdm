@@ -1,12 +1,14 @@
 """Read a playlist through Spotify's Web API, logged in as the user.
 
+Shared by `playlist-diff` and `playlist-export`, which is why it lives in core.
+
 **Only playlists the user owns or collaborates on.** Since Spotify's February
 2026 Development Mode changes, `GET /playlists/{id}/items` answers 403 for any
 other playlist, and the playlist object itself comes back without its `items`.
 There is no app-only way around it: the client-credentials flow has no user, so
-it owns nothing and reads no contents. A 403 is therefore reported as "not your
-playlist — export it to CSV" rather than as a fault. The same changes require
-the account that registered the app to have Premium.
+it owns nothing and reads no contents. A 403 is raised as `PlaylistNotAccessible`
+so each caller can say what to do instead — the advice differs per command. The
+same changes require the account that registered the app to have Premium.
 
 Login is the Authorization Code flow with PKCE, which needs a client ID and no
 client secret, so there is nothing secret to keep. The redirect lands on a
@@ -38,7 +40,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Callable, Optional
 
-from sdm.features.playlist_diff.sources import Playlist, PlaylistTrack
+from sdm.core.playlist import Playlist, PlaylistTrack
 
 AUTHORIZE_URL = "https://accounts.spotify.com/authorize"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
@@ -62,6 +64,15 @@ class SpotifyError(RuntimeError):
     """A Spotify step failed. The message is written for the user, not for a traceback."""
 
 
+class PlaylistNotAccessible(SpotifyError):
+    """Spotify will not list this playlist's tracks for this user (403): it is someone else's."""
+
+    def __init__(self, message: str, name: str, owner: str):
+        super().__init__(message)
+        self.name = name
+        self.owner = owner
+
+
 class _ApiError(SpotifyError):
     def __init__(self, status: int, message: str):
         super().__init__(f"Spotify answered {status}: {message}")
@@ -70,7 +81,7 @@ class _ApiError(SpotifyError):
 
 
 def resolve_client_id(explicit: Optional[str]) -> Optional[str]:
-    """The `--client-id` value if given, else `$SDM_SPOTIFY_CLIENT_ID`, else None."""
+    """The explicitly passed client ID if any, else `$SDM_SPOTIFY_CLIENT_ID`, else None."""
     return explicit or os.environ.get(CLIENT_ID_ENV) or None
 
 
@@ -254,6 +265,10 @@ def _get(url: str, token: str) -> dict:
     return _request(urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"}))
 
 
+def _names(objects) -> tuple[str, ...]:
+    return tuple(o["name"] for o in objects or () if o.get("name"))
+
+
 def track_from_entry(entry: dict) -> Optional[PlaylistTrack]:
     """One playlist entry as a `PlaylistTrack`, or None if it is not a comparable track.
 
@@ -263,19 +278,31 @@ def track_from_entry(entry: dict) -> Optional[PlaylistTrack]:
     obj = entry.get("item") or entry.get("track")
     if not obj or obj.get("type", "track") != "track" or not obj.get("name"):
         return None
+    album = obj.get("album") or {}
     return PlaylistTrack(
         title=obj["name"],
-        artists=tuple(a["name"] for a in obj.get("artists") or () if a.get("name")),
-        album=(obj.get("album") or {}).get("name") or "",
+        artists=_names(obj.get("artists")),
+        album=album.get("name") or "",
         duration_ms=obj.get("duration_ms"),
         isrc=(obj.get("external_ids") or {}).get("isrc") or "",
-        url=(obj.get("external_urls") or {}).get("spotify") or "",
+        uri=obj.get("uri") or "",
         is_local=bool(entry.get("is_local") or obj.get("is_local")),
+        album_artists=_names(album.get("artists")),
+        release_date=album.get("release_date") or "",
+        disc_number=obj.get("disc_number"),
+        track_number=obj.get("track_number"),
+        explicit=obj.get("explicit"),
+        added_at=entry.get("added_at") or "",
+        added_by=(entry.get("added_by") or {}).get("id") or "",
     )
 
 
 def fetch_playlist(playlist_id: str, token: str, *, log: Callable[[str], None] = print) -> Playlist:
-    """Read a playlist's name, owner and every track. Raises `SpotifyError` with advice on 403/404."""
+    """Read a playlist's name, owner and every track.
+
+    Raises `PlaylistNotAccessible` for someone else's playlist, `SpotifyError`
+    for everything else that goes wrong.
+    """
     meta_url = f"{API_URL}/playlists/{playlist_id}?" + urllib.parse.urlencode(
         {"fields": "name,owner(id,display_name)"}
     )
@@ -303,13 +330,13 @@ def fetch_playlist(playlist_id: str, token: str, *, log: Callable[[str], None] =
             page = _get(url, token)
         except _ApiError as exc:
             if exc.status == 403:
-                raise SpotifyError(
+                raise PlaylistNotAccessible(
                     f"Spotify will not list the tracks of '{playlist.name}' "
-                    f"(owner: {playlist.owner or 'unknown'}). Since February 2026 the "
-                    "API only returns playlists you own or collaborate on. Export "
-                    "it to CSV (Exportify, TuneMyMusic) and pass the file instead, "
-                    "or copy its tracks into a playlist of your own. "
-                    f"(Spotify said: {exc.message})"
+                    f"(owner: {playlist.owner or 'unknown'}): since February 2026 "
+                    "the API only returns playlists you own or collaborate on. "
+                    f"(Spotify said: {exc.message})",
+                    playlist.name,
+                    playlist.owner,
                 ) from None
             raise
         for entry in page.get("items") or ():

@@ -4,9 +4,9 @@ Read-only on both sides: it reads the playlist and the folder's tags, and
 writes only its reports. The Spotify token it asks for has read-only scopes, so
 it could not modify a playlist even by mistake.
 
-The first registered feature to need the network and a credential. See
-`spotify_api.py` for why the API only covers playlists the user owns or
-collaborates on, and `sources.py` for the CSV route that covers the rest.
+Needs the network and a credential for a link, nothing for a CSV. See
+`sdm.core.spotify` for why the API only covers playlists the user owns or
+collaborates on, and `sdm.core.playlist` for the CSV route that covers the rest.
 """
 from __future__ import annotations
 
