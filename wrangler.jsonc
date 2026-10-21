@@ -1,0 +1,12 @@
+// Cloudflare Workers config: serves the browser build of sdm from ./dist.
+// Build it first with `python build_browser.py`; see README.md. There is no
+// Worker script - static files only, with the headers in dist/_headers.
+{
+  "name": "sdm",
+  "compatibility_date": "2026-09-30",
+  "assets": {
+    "directory": "./dist"
+  },
+  // Attaches the subdomain to this Worker and creates its DNS record on deploy.
+  "routes": [{ "pattern": "sdm.eigenomar.com", "custom_domain": true }]
+}

@@ -6,7 +6,7 @@
 // track of the same group keeps the playback position, so the two files of a
 // duplicate pair can be heard at the same moment.
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { audioUrl } from "./api";
+import { audioUrl, browser } from "./api";
 import { baseName, extension } from "./format";
 
 export interface PlayItem {
@@ -63,9 +63,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const el = audio.current;
     if (!el || !current) return;
-    el.src = audioUrl(current.path);
-    el.load();
-    void el.play().catch(() => undefined);
+    const start = (src: string) => {
+      el.src = src;
+      el.load();
+      void el.play().catch(() => undefined);
+    };
+    if (!browser) {
+      start(audioUrl(current.path));
+      return;
+    }
+    // The browser build opens a picked file lazily, so its URL comes later.
+    let stale = false;
+    browser.audioSrc(current.path).then(
+      (src) => !stale && start(src),
+      (e: unknown) => !stale && setError(e instanceof Error ? e.message : String(e)),
+    );
+    return () => {
+      stale = true;
+    };
   }, [current]);
 
   return (

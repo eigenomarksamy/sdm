@@ -19,3 +19,5 @@ dist/
 # sdm web: the page is built from frontend/ (npm run build), never committed
 frontend/node_modules/
 src/sdm/web/static/
+# wrangler dev / deploy state
+.wrangler/

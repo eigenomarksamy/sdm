@@ -18,6 +18,8 @@ features that share a small common core:
  sdm download         —  deprecated, not registered (see below)
 
  sdm web              —  all of the above in a browser, on this machine only
+ sdm.eigenomar.com    —  catalog, analyze and playlist-diff in any browser,
+                         with nothing uploaded (the browser build, below)
 ```
 
 Each feature is self-contained: it may use `sdm.core`, never a sibling. Heavy
@@ -791,6 +793,83 @@ on Vite's port and forwards `/api` to a running `sdm web` (`SDM_WEB_BACKEND`
 overrides the default `http://127.0.0.1:8770`). Open the link `sdm web` prints
 with the port changed to Vite's.
 
+## In the browser — sdm.eigenomar.com
+
+The same page as `sdm web`, with no server behind it. Python runs in the
+visitor's own browser through [Pyodide](https://pyodide.org), you pick a music
+folder or a Rekordbox USB, and the commands read it where it is.
+
+Three commands run there: **`catalog`** (both modes), **`analyze`**, and
+**`playlist-diff` with a CSV export**. The rest need something a browser tab
+does not have — `duplicates` and `rekordbox` fingerprint with the `fpcalc`
+program, `quality` uses ffmpeg, and `playlist-export` and Spotify links need a
+login that redirects to a local server — so they stay with `sdm` on your own
+machine.
+
+### Nothing leaves the browser
+
+The page's Content-Security-Policy (`frontend/src/browser/_headers`) lets it
+connect to its own site and nowhere else, so the browser itself blocks any
+attempt to send a file elsewhere — and the site serves static files, with
+nothing to receive one. Everything the page loads, Python included, comes from
+that site; nothing is fetched from a CDN or PyPI. Reports are kept in the tab
+and are gone on reload; save one with *Open raw*.
+
+### Picking a folder
+
+In Chrome and Edge the page asks to **view** the folder (the File System Access
+picker). Firefox and Safari use the older folder input, which browsers word as
+an *upload*; it is not one, the files are read in the tab. If Chrome or Edge
+refuses a folder, *use the other picker* under the button switches to that
+input. Either way the browser lists the whole folder first, which for a large
+USB takes it ~10 seconds before the page can show progress.
+
+Only what a command reads is handed to Python: audio files, and the Rekordbox
+analysis folder (`PIONEER/USBANLZ`). On the reference USB that is 14,851 of
+29,593 files — the rest is artwork.
+
+### How fast
+
+Reference USB (3,664 tracks, 29,593 files), Edge, warm disk cache, compared with
+the same commands run natively:
+
+| | Native | In the browser |
+| --- | --- | --- |
+| Start (first visit downloads 16 MB, cached after) | — | 2.4–2.9 s |
+| Pick the USB (browser lists it, then the page mounts it) | — | 12–13 s (10 s of it the browser's listing) |
+| `catalog --missing-metadata` | 5.6 s | 18–20 s |
+| `catalog` | 8.3 s | 21 s |
+| `analyze` | 68 s | 85–88 s |
+| `playlist-diff` with a CSV | 8.3 s | 21 s |
+
+The reports are byte-identical to a native run's, apart from the file paths
+(`/music/<folder>/…` in the browser). Reading tags is where the browser loses
+most: every read of a picked file is a round trip to the browser process, so
+the worker reads through a small block cache (`frontend/src/browser/worker.ts`).
+
+One command runs at a time. Cancelling restarts Python in the tab, which takes
+a couple of seconds; earlier reports and picked folders are kept.
+
+### Build and deploy
+
+```ps1
+python build_browser.py              # npm ci, the page, Pyodide, the wheels -> dist/
+python build_browser.py --no-install # the same without npm ci
+npx wrangler dev                     # serve dist/ with its headers, http://127.0.0.1:8787
+```
+
+`build_browser.py` needs Node and Python with pip, and the network at build time
+(npm, PyPI, and jsDelivr for Pyodide's numpy and packaging, hash-checked against
+Pyodide's lock file). Cloudflare serves `dist/` as static assets
+(`wrangler.jsonc`). In the Cloudflare dashboard, *Workers & Pages → Create →
+Import a repository*:
+
+- Build command: `python3 build_browser.py`
+- Deploy command: `npx wrangler deploy`
+
+To develop the page against Python in the browser, run `build_browser.py`
+once, then `npm run dev:browser` in `frontend/`.
+
 ---
 
 ## Layout
@@ -820,6 +899,7 @@ src/sdm/
     quality/          sdm quality
     playlist_diff/    sdm playlist-diff
     playlist_export/  sdm playlist-export
+  browser.py          the browser build's Python — a third front end, beside cli.py
   web/                sdm web — a front end beside cli.py, not a feature
     schema.py         the argparse tree as forms, and form values back to argv
     jobs.py           one subprocess per run; cancel that runs `finally`
@@ -828,6 +908,9 @@ src/sdm/
     server.py         stdlib HTTP server: the page, the JSON API, and who may use it
     static/           the built page (gitignored; `npm run build` writes it)
 frontend/             the page's source: React + TypeScript, built with Vite
+  src/browser/        the browser build's API, Python worker, and _headers
+build_browser.py      builds the browser version into dist/ (gitignored)
+wrangler.jsonc        Cloudflare Workers config that serves dist/
 docs/rekordbox.md     detailed Rekordbox reference
 docs/analyze.md       detailed ANLZ / phrase-analysis reference
 legacy/               superseded code, not imported

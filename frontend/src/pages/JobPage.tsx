@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { api, type JobDetail, type JobOutput, type LogLine } from "../api";
+import { api, browser, type JobDetail, type JobOutput, type LogLine } from "../api";
 import { CopyButton, ErrorBox, StatusBadge } from "../components";
 import { elapsed, plural } from "../format";
 import { href } from "../router";
@@ -91,7 +91,10 @@ export function JobPage({ id, onChange }: { id: string; onChange: () => void }) 
               className="danger"
               disabled={job.cancel_requested}
               onClick={async () => {
-                if (!window.confirm(`Cancel sdm ${job.command}? The run stops; nothing it has already written is undone.`)) return;
+                const what = browser
+                  ? "Python restarts in this tab, which takes a few seconds; reports from earlier runs are kept."
+                  : "The run stops; nothing it has already written is undone.";
+                if (!window.confirm(`Cancel sdm ${job.command}? ${what}`)) return;
                 try {
                   await api.cancelJob(job.id);
                   setJob({ ...job, cancel_requested: true }); // the poll picks up the rest

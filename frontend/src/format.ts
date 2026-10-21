@@ -1,4 +1,5 @@
 // Small display helpers shared by the views.
+import { browser } from "./api";
 
 export const AUDIO_EXTS = [".mp3", ".m4a", ".flac", ".aif", ".aiff", ".wav", ".ogg"];
 
@@ -12,6 +13,8 @@ const WINDOWS = navigator.userAgent.includes("Windows");
  * the USB as Rekordbox records it, not a file the server can find.
  */
 export function isAudioPath(value: string): boolean {
+  // The browser build plays from folders picked in the tab, at their mount paths.
+  if (browser) return browser.isPlayable(value);
   const v = value.toLowerCase();
   const absolute = WINDOWS ? /^([a-z]:[\\/]|\\\\)/.test(v) : v.startsWith("/");
   return absolute && AUDIO_EXTS.some((ext) => v.endsWith(ext));

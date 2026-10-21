@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, type Command, type JobSummary, type ReportFile, type Session } from "../api";
+import { api, browser, type Command, type JobSummary, type ReportFile, type Session } from "../api";
+import { PrivacyNote } from "../browser/ui";
 import { StatusBadge } from "../components";
 import { ago } from "../format";
 import { href } from "../router";
@@ -15,10 +16,27 @@ export function Home({ commands, jobs, session }: { commands: Command[]; jobs: J
     <div className="page">
       <header className="page-head">
         <h1>Music library toolchain</h1>
-        <p className="muted">
-          Every command from <code>sdm --help</code>, run on this machine. Reports land in{" "}
-          <code>{session.out_root}</code>.
-        </p>
+        {browser ? (
+          <>
+            <PrivacyNote />
+            <p className="muted">
+              Not in the browser:{" "}
+              {browser.offline().map((name, i) => (
+                <span key={name}>
+                  {i > 0 && ", "}
+                  <code>{name}</code>
+                </span>
+              ))}
+              , and Spotify links in <code>playlist-diff</code> (a CSV export works). They need fpcalc, ffmpeg or a
+              Spotify login, so they run with sdm on your own machine.
+            </p>
+          </>
+        ) : (
+          <p className="muted">
+            Every command from <code>sdm --help</code>, run on this machine. Reports land in{" "}
+            <code>{session.out_root}</code>.
+          </p>
+        )}
       </header>
 
       <section className="cards">

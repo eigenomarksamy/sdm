@@ -1,0 +1,20 @@
+# Headers for every file of the browser build. Cloudflare Workers reads this
+# from the assets directory (dist/); Vite copies it there under --mode browser.
+#
+# The Content-Security-Policy is what makes "nothing leaves your browser" a
+# rule the browser enforces rather than a claim the page makes: connect-src
+# 'self' blocks every fetch, XHR, WebSocket and beacon to any other origin, in
+# the page and in the Python worker alike, and this origin serves only static
+# files. 'wasm-unsafe-eval' lets Pyodide compile its WebAssembly, and nothing
+# else. media-src blob: is the player, which plays picked files by blob URL.
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+
+# Content-hashed by Vite, and a pinned Pyodide release under its own version:
+# both change name when they change, so browsers may keep them.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+/pyodide/*
+  Cache-Control: public, max-age=31536000, immutable

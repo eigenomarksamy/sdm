@@ -161,3 +161,51 @@ export const api = {
 
 export const rawUrl = (path: string) => `/api/reports/raw${qs({ path })}`;
 export const audioUrl = (path: string) => `/api/audio${qs({ path })}`;
+
+// --- the browser build --------------------------------------------------------
+//
+// The browser build (sdm.eigenomar.com) has no server: `npm run build:browser`
+// swaps this module for src/browser/api.ts, which answers every call above from
+// Python running in a worker. What a page needs only there is below, and
+// `browser` is null in this build, so a shared component can ask which it is in.
+
+export interface BootState {
+  /** What is happening, for the screen shown while Python starts. */
+  step: string;
+  /** Bytes of the runtime and packages downloaded so far, and in all. */
+  loaded: number;
+  total: number;
+  error: string | null;
+}
+
+export interface PickProgress {
+  text: string;
+  done?: number;
+  total?: number;
+}
+
+export interface BrowserHooks {
+  subscribeBoot(listener: (state: BootState) => void): () => void;
+  /** The File System Access picker, which asks to view a folder rather than to upload it. */
+  canViewFolders: boolean;
+  /** Commands that need sdm on a real machine, by name. Known once Python has started. */
+  offline(): string[];
+  /**
+   * Ask for a folder (or a file), mount what the commands read, and resolve to
+   * its path — null if the visitor closed the picker. Call it from a click:
+   * browsers open pickers only in answer to one. `fallback` forces the
+   * `<input webkitdirectory>` picker even where the other exists.
+   */
+  pick(
+    mode: "dir" | "file",
+    accept: string[],
+    onProgress: (progress: PickProgress) => void,
+    options?: { fallback?: boolean },
+  ): Promise<{ path: string; summary: string } | null>;
+  /** An audio file inside a picked folder: what can be played. */
+  isPlayable(path: string): boolean;
+  /** A URL for the player. Async, because a folder handle opens files lazily. */
+  audioSrc(path: string): Promise<string>;
+}
+
+export const browser: BrowserHooks | null = null;

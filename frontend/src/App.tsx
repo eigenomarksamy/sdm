@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, type Command, type JobSummary, type Session } from "./api";
+import { api, ApiError, browser, type Command, type JobSummary, type Session } from "./api";
+import { BootScreen } from "./browser/ui";
 import { ErrorBox } from "./components";
 import { CommandPage } from "./pages/CommandPage";
 import { Home } from "./pages/Home";
@@ -54,13 +55,15 @@ export function App() {
   if (error) {
     return (
       <div className="centered">
-        <h2>sdm web is not reachable</h2>
+        <h2>{browser ? "Python did not start in this tab" : "sdm web is not reachable"}</h2>
         <ErrorBox error={error} />
-        <p className="muted">Is `sdm web` still running?</p>
+        <p className="muted">
+          {browser ? "sdm needs a current Chrome, Edge, Firefox or Safari." : "Is `sdm web` still running?"}
+        </p>
       </div>
     );
   }
-  if (!session) return <div className="centered muted">Connecting…</div>;
+  if (!session) return browser ? <BootScreen browser={browser} /> : <div className="centered muted">Connecting…</div>;
 
   const [section, arg] = route.segments;
   const running = jobs.filter((j) => j.status === "running");
@@ -114,9 +117,15 @@ export function App() {
         <a href={href("/reports")} className={section === "reports" || section === "report" ? "active" : ""}>
           Reports
         </a>
-        <div className="sidebar-foot muted" title={session.out_root}>
-          Local only · 127.0.0.1
-        </div>
+        {browser ? (
+          <div className="sidebar-foot muted" title="Your files are read in this tab and nothing leaves the browser.">
+            In this tab only · nothing uploaded
+          </div>
+        ) : (
+          <div className="sidebar-foot muted" title={session.out_root}>
+            Local only · 127.0.0.1
+          </div>
+        )}
       </nav>
       <main className="content">{page}</main>
     </div>

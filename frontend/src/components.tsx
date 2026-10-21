@@ -1,6 +1,7 @@
 // Small components shared by several pages.
 import { useEffect, useState, type ReactNode } from "react";
-import { api, ApiError, type Field, type FormValue, type FsListing, type JobStatus } from "./api";
+import { api, ApiError, browser, type Field, type FormValue, type FsListing, type JobStatus } from "./api";
+import { PathPickRow } from "./browser/ui";
 import { copyText } from "./format";
 
 export function StatusBadge({ status, cancelling }: { status: JobStatus; cancelling?: boolean }) {
@@ -124,14 +125,19 @@ export function FieldInput({
         {field.positional ? <strong>{field.label}</strong> : <code>{field.label}</code>}
         {field.required && <span className="required"> required</span>}
       </label>
-      <div className="input-row">
-        {input}
-        {field.path && (
-          <button type="button" onClick={() => setPicking(true)}>
-            Browse…
-          </button>
-        )}
-      </div>
+      {browser && field.path ? (
+        // No server to browse in the browser build: the visitor picks instead.
+        <PathPickRow browser={browser} mode={field.path} accept={field.accept} input={input} onPicked={onChange} />
+      ) : (
+        <div className="input-row">
+          {input}
+          {field.path && (
+            <button type="button" onClick={() => setPicking(true)}>
+              Browse…
+            </button>
+          )}
+        </div>
+      )}
       {help}
       {picking && field.path && (
         <PathPicker
