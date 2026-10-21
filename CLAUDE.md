@@ -16,6 +16,8 @@ sdm catalog  sdm duplicates  sdm rekordbox  sdm analyze  sdm quality
 
 sdm download — deprecated, not registered (features/spotify)
 sdm web      — a front end over all of the above, beside cli.py (sdm.web)
+browser      — a third front end: catalog, analyze, playlist-diff (CSV) running
+               in a browser tab via Pyodide, at sdm.eigenomar.com (sdm.browser)
 ```
 
 **`sdm download` is switched off.** `spotify` is not in `FEATURES` in `cli.py`,
@@ -44,6 +46,10 @@ parked, not condemned.
 | `src/sdm/web/` | `sdm web` — local web UI. **A front end like `cli.py`, not a feature**; imports no feature. Stdlib only |
 | `src/sdm/web/static/` | The built page. Gitignored, written by `npm run build` in `frontend/` |
 | `frontend/` | The page's source: React 19 + TypeScript 7 + Vite 8. `package-lock.json` is committed, `node_modules/` is not |
+| `src/sdm/browser.py` | The browser build's Python half. **A front end like `cli.py` and `sdm.web`, not a feature**; imports no feature |
+| `frontend/src/browser/` | The browser build's page side: the API swapped in for `src/api.ts`, the Pyodide worker, `_headers` |
+| `build_browser.py` | Builds the browser version into `dist/` (gitignored): page, self-hosted Pyodide, wheels |
+| `wrangler.jsonc` | Cloudflare Workers config serving `dist/` at sdm.eigenomar.com. `.wrangler/` is its gitignored state |
 | `docs/rekordbox.md` | Detailed Rekordbox reference |
 | `docs/analyze.md` | Detailed ANLZ / phrase-analysis reference |
 | `legacy/` | Superseded code, not imported, not expected to run |
@@ -66,6 +72,10 @@ drives every command, which no feature may do, so it sits beside `cli.py` in
 `cli.FRONTENDS` rather than in `FEATURES` — and even so it imports no feature:
 it reads the parser, runs subprocesses, and reads report files. Keep it that
 way; a web view that needs a feature's logic means that logic moves to `core`.
+**`sdm.browser` is the same kind of thing** — a front end that runs commands
+through `cli.main` and reuses `web/schema.py` and `web/reports.py` — and is
+held to the same rule. It is not in `cli.FRONTENDS`: it is no subcommand, only
+the module the browser build's worker imports.
 
 Each feature package exposes `add_parser(subparsers, parents=())` and sets
 `handler=` via `set_defaults`; `cli.py` dispatches on it and returns its value
@@ -91,6 +101,10 @@ sdm playlist-export "<spotify playlist link>"            # -> out/playlist-expor
 
 cd frontend; npm install; npm run build   # builds the page into src/sdm/web/static/
 sdm web                                   # http://127.0.0.1:8770, opens the browser
+
+python build_browser.py                   # the browser build -> dist/ (npm ci, Pyodide, wheels)
+python build_browser.py --no-install      # same, skipping npm ci
+npx wrangler dev                          # serves dist/ with _headers, http://127.0.0.1:8787
 ```
 
 `pyproject.toml` is the only dependency manifest — there is no `requirements.txt`.
@@ -149,6 +163,14 @@ identical inputs.
   Vorbis values are lists, ID3 values are frames.
   A BPM tag of `0` is read as absent — a placeholder would otherwise satisfy
   `require_bpm` and then compare against nothing.
+  **Multi-value fields are joined with `/` (`MULTI_VALUE_SEP`), not NUL.**
+  ID3v2.4 lets one frame hold several values, and mutagen and eyed3 both
+  stringify them NUL-joined — 233 artist tags on the test clone, all ID3. The
+  NUL reached every report, and `playlist-diff` (which splits artists on `/`)
+  saw "Delano Smith\x00Brian Kage" as one unknown artist and reported an owned
+  track missing. `_first` joins frames, `read_basic_tags` re-joins eyed3's
+  strings. Vorbis/MP4 lists still take the first value; the clone has no
+  multi-value ones to test a join against.
   **`_tag` skips a name the container rejects, and that is load-bearing too.**
   Vorbis comments only allow ASCII keys, so `tags.get("\xa9ART")` on a FLAC
   *raises* `ValueError` — and the lookup only reaches the MP4 spelling when the
@@ -400,8 +422,10 @@ that `with` block** — leaving it deletes the binary. `sdm rekordbox` is not
 wired to it yet and still needs fpcalc on PATH.
 
 **Measured baseline** (`test-sdm-lib-clone/pioneer-usb-full-clone`, 3,664 files):
-9m12s wall, 64,272 candidate pairs, 178 confirmed, **158 groups** (148 pairs, 10
-triples), 9 tracks unfingerprintable. Fingerprinting runs ~0.14s/track and is
+9m12s wall, 64,157 candidate pairs, 178 confirmed, **158 groups** (148 pairs, 10
+triples), 9 tracks unfingerprintable. (64,157 re-measured 2026-10-20 on both
+sides of the multi-value tag fix; an earlier figure of 64,272 predates the
+current tag readers.) Fingerprinting runs ~0.14s/track and is
 the bulk of the time. Widest duration spread inside any group was 0.84s, and the
 groups included an mp3/flac pair and several same-audio/different-filename hits
 — the cases a hash or a filename match would both miss. Use these numbers as the
@@ -638,6 +662,116 @@ a real `duplicates` run mid-fingerprint with a borrowed fpcalc (cancelled in
 headless Edge via `puppeteer-core` for every view in light, dark and phone
 width (A/B position carry-over measured, zero console errors). Not yet done: a
 Spotify login driven from the UI with a real client ID.
+
+## The browser build — sdm.eigenomar.com
+
+The third front end. Static files on Cloudflare Workers (`wrangler.jsonc`:
+assets only, no Worker script); Python runs in the visitor's tab through
+Pyodide 314.0.7 (Python 3.14) in a Web Worker. Online: `catalog` (both modes),
+`analyze`, `playlist-diff` with a CSV. Not: `duplicates`/`rekordbox` (fpcalc),
+`quality` (ffmpeg), `playlist-export` and playlist links (the Spotify login
+needs a loopback server). **`cli.py` and every feature are unchanged** —
+`sdm.browser.ONLINE_COMMANDS` and `HIDDEN_FIELDS` cut the forms down instead.
+
+- `frontend/src/api.ts` stays the page's only link to a backend.
+  `vite build --mode browser` redirects every import of it to
+  `src/browser/api.ts` (a plugin in `vite.config.ts`; `src/browser/` itself
+  still gets the real one, for `ApiError`), which answers the same calls in the
+  tab. Shared components ask `browser` — `null` in the server build — for the
+  little only the browser has: the boot screen, a picker instead of
+  `PathPicker`, `isPlayable`/`audioSrc` for the player. **Keep browser-only
+  behaviour behind `browser`**, so `npm run build` and `sdm web` stay as they are.
+- `src/sdm/browser.py` — one entry point, `call(name, args_json)`, answering
+  JSON with the status `sdm web`'s server would have sent. `boot`, `commands`,
+  `prepare` (form -> argv through `schema.build`; refuses an offline command, a
+  path not picked in this tab, a Spotify link), `run` (`cli.main` in process),
+  `outputs` (the `jobs.py` rule), `table` (`reports.TableReader`).
+- `src/browser/worker.ts` — boots Pyodide, mounts picks, runs one command at a
+  time; messages are handled strictly in order. `src/browser/api.ts` — job
+  records and logs (polled exactly as from the server), a copy of every report,
+  the picked folders.
+
+What is load-bearing:
+
+- **Module worker.** Pyodide 314 refuses a classic one ("Classic web workers
+  are not supported"), hence Vite's `worker.format: "es"`.
+- **The pyrekordbox shim** (`browser._shim_pyrekordbox`). `import
+  pyrekordbox.anlz` runs the package `__init__`, which imports the database
+  layer — sqlcipher3, with no Pyodide build. A bare module carrying the
+  package's `__path__` goes into `sys.modules` first; `anlz` itself needs only
+  construct and numpy. Wheels are `--no-deps` for that reason (and eyed3's
+  spurious `coverage`). numpy and packaging (eyed3's `deprecation` imports it)
+  are Pyodide's own builds. No micropip: `loadPackage` installs wheel URLs.
+- **The mount filter** (`src/browser/files.ts`). Only audio (`AUDIO_EXTS`,
+  AppleDouble stubs included — the catalog export counts them) and anything
+  under `USBANLZ` is mounted: 14,851 of 29,593 files on the reference USB, the
+  rest being `PIONEER/Artwork`. The rules come from `browser.boot`, i.e. from
+  `core.track` and `core.anlz`, so they cannot drift. Handing the Files to the
+  worker fell from 6.6–10.5s to 2.3–3.0s.
+- **NTFS order in `readdir`.** The catalog export writes rows in `os.walk`
+  order, so matching a Windows run byte for byte needs NTFS's listing order
+  (each UTF-16 unit uppercased, compared unit by unit). Sorting files before
+  mounting cannot give it: WORKERFS keeps a directory in a plain object, and
+  objects list integer-like keys ("1977") first. `worker.ts` replaces WORKERFS's
+  `readdir` with a sorted one.
+- **The block cache in WORKERFS's `read`.** Every read is a blob slice plus a
+  synchronous FileReaderSync round trip, ~0.7–1 ms almost regardless of size,
+  and tag readers make several small reads per file. Reads go through 64 KiB
+  blocks, 4 kept per open file — the file's own bytes, so it cannot change a
+  result. `--missing-metadata`: no cache 33–35s, 64 KiB 18–20s, 256 KiB 18s,
+  1 MiB 28s (it reads 5.9 GB). `?block=N` on the page (0 = off) overrides it
+  and logs each run's I/O to `console.debug` — a measuring knob.
+- **Cancel restarts Python.** Interrupting it needs SharedArrayBuffer, so
+  cross-origin isolation, which is not set up. Cancel terminates the worker
+  and starts another, which re-mounts every pick and restores every report.
+  Nothing here can need a `finally` (no borrowed fpcalc). Measured: cancelled in
+  0.3s, reports kept, the next run fine.
+- **Reports live on the page as well as in Python's `/out`.** After each run
+  the worker sends every changed file under `/out` back as bytes. Those copies
+  are what survives a cancel, what `api.reports()` lists (instantly, even while
+  a run blocks the worker) and what *Open raw* opens; `api.table()` goes to
+  Python and waits out a run. Each report is held twice, which matters only for
+  `--export-beats`.
+- **Pickers.** Chromium: `showDirectoryPicker` — asks to *view*, and the handle
+  crosses to the worker uncloned and is walked there. Firefox/Safari:
+  `<input webkitdirectory>` — browsers word it as an upload — filtered on the
+  page and handed over 1,000 Files per message so progress can show; Chromium
+  offers it too ("use the other picker") for a folder it refuses. Mounted at
+  `/music/<folder name>`; a pick of a same-named folder replaces the mount.
+  Picks die with the tab but form values persist, so `prepare` checks the path
+  and says to pick again.
+- **The CSP** (`src/browser/_headers`): `default-src 'none'`, and
+  `connect-src 'self'` is what makes "nothing leaves the browser" enforced
+  rather than claimed, in the page and the worker alike. `'wasm-unsafe-eval'`
+  for Pyodide, `media-src blob:` for playback. Everything is self-hosted for
+  this reason — do not add a CDN or any other origin. A test that byte-compares
+  reports needs a second tab with CSP bypassed: `fetch(blob:)` is connect-src.
+- **Self-hosted assets** (`build_browser.py`): only the four core files from the
+  npm package `frontend/package.json` pins (keep `PYODIDE_VERSION` in step),
+  numpy and packaging from jsDelivr checked against the lock's sha256, and the
+  lock itself trimmed into `python.json` — so `pyodide/v<version>/` holds only
+  release files and is cached as immutable. 16.0 MB on a first visit. The build
+  fails if Cloudflare's limits are exceeded (Oct 2026: 25 MiB per file, 20,000
+  files per version on the free plan); it makes ~25 files, the largest 9.6 MB.
+
+**Measured baseline** (reference USB, Edge 155 headless, `wrangler dev`,
+warm disk cache; native from the same machine): start 2.4–2.9s; picking the
+USB 12–13s, ~10s of it the browser listing 29,593 files;
+`catalog --missing-metadata` 18–20s (native 5.6s), `catalog` 21s (8.3s),
+`analyze` 85–88s (68s), `playlist-diff` CSV 21s (8.3s). Every report
+byte-identical to native once `C:\…\` paths are mapped to `/music/<folder>/…`
+(and `analysis.json`'s CRLF, which is Windows text mode, not the browser).
+
+**Verified** in headless Edge via `puppeteer-core` with the CSP enforced: all
+four commands through the real forms, byte-compared; playback of a picked file;
+cancel mid-`analyze` and a rerun after; light, dark and phone width with no
+horizontal scroll; zero console errors throughout. `npm run build` and
+`sdm web` re-checked unchanged. `showDirectoryPicker` was exercised through an
+origin-private-file-system handle on a 153-file subset (CDP cannot answer that
+picker for a real folder) — reports identical to the input picker and to
+native. **Not verified:** that picker on a real folder, a drive root (`D:\`)
+in either picker, the prompts' exact wording, Firefox and Safari, and a real
+Cloudflare deploy.
 
 ## Conventions
 

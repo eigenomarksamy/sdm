@@ -22,6 +22,19 @@ from typing import Optional
 
 from sdm.core.track import Track
 
+#: How several values in one tag field are joined into one string. ID3v2.4 lets
+#: a text frame hold more than one value — two artists in one TPE1 — and both
+#: mutagen and eyed3 hand them back joined with NUL ("Delano Smith\x00Brian
+#: Kage"). Left that way the byte reached every report, and nothing that splits
+#: artists could see two of them. "/" is what 304 artist tags on the test clone
+#: already use, and what `playlist-diff` splits on.
+MULTI_VALUE_SEP = "/"
+
+
+def _join_values(text: str) -> str:
+    """A NUL-joined multi-value string as `MULTI_VALUE_SEP`-joined, empty parts dropped."""
+    return MULTI_VALUE_SEP.join(part for part in text.split("\x00") if part)
+
 
 def read_basic_tags(filepath: str) -> tuple[str, str, Optional[str]]:
     """Return `(title, artist, error)` for one file, via eyed3.
@@ -38,8 +51,8 @@ def read_basic_tags(filepath: str) -> tuple[str, str, Optional[str]]:
         audiofile = eyed3.load(filepath)
 
         if audiofile and audiofile.tag:
-            title = audiofile.tag.title or "Unknown"
-            artist = audiofile.tag.artist or "Unknown"
+            title = _join_values(audiofile.tag.title or "") or "Unknown"
+            artist = _join_values(audiofile.tag.artist or "") or "Unknown"
 
     except Exception as e:
         return title, artist, str(e)
@@ -54,9 +67,16 @@ def _first(value):
     OGG; ID3 hands back a frame object that stringifies to its text. Taking
     `[0]` only for the list case is what keeps a FLAC title from arriving as the
     literal string `"['Somefunkydrum']"`.
+
+    An ID3 frame can be multi-valued too, and its own `str` joins the values
+    with NUL; they are joined with `MULTI_VALUE_SEP` here instead. A frame whose
+    values are all empty comes back as "", which `_tag` treats as absent.
     """
     if isinstance(value, list):
         return value[0] if value else None
+    text = getattr(value, "text", None)
+    if isinstance(text, list):
+        return MULTI_VALUE_SEP.join(str(part) for part in text if str(part))
     return value
 
 
