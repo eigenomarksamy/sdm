@@ -12,12 +12,18 @@ Several readers, because the callers need different things:
 - `read_title_artist_raw` is the same read without the "Unknown" substitution,
   for the catalog's missing-metadata report, which has to tell absent from
   unreadable.
+- `read_audio_header` (mutagen) is not about names at all: it returns what the
+  file's header and tags *claim* about its audio — bitrate, sample rate, bit
+  depth, length, encoder, ReplayGain — for `quality` to diff against a
+  measurement.
 
 All are best-effort by design: a file with unreadable tags never aborts the
 run. The first three answer "Unknown"; the raw reader answers None.
 """
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
 from typing import Optional
 
 from sdm.core.track import Track
@@ -163,6 +169,117 @@ def read_title_artist(filepath: str) -> tuple[str, str]:
     """
     title, artist, _ = read_title_artist_raw(filepath)
     return title or "Unknown", artist or "Unknown"
+
+
+@dataclass(frozen=True)
+class AudioHeader:
+    """What a file says about its own audio, before anything decodes it.
+
+    Every field is a claim — by the encoder that wrote the header, or the
+    tagger that wrote the tags — which is the point: `quality` measures the
+    same properties and reports where the two disagree. None means the file
+    does not say.
+    """
+    container: Optional[str] = None         # mutagen's name for it: "MP3", "FLAC", "WAVE", "MP4", ...
+    codec: Optional[str] = None             # MP4 only, where the container does not decide it: "mp4a.40.2", "alac"
+    bitrate_kbps: Optional[float] = None
+    bitrate_mode: Optional[str] = None      # "CBR", "VBR", "ABR"; MP3 only, from its Xing/LAME header
+    sample_rate: Optional[int] = None
+    bit_depth: Optional[int] = None         # lossless only; a lossy format has none to claim
+    channels: Optional[int] = None
+    duration_seconds: Optional[float] = None
+    encoder: Optional[str] = None           # LAME's own header if present, else the encoder tag
+    replaygain_db: Optional[float] = None
+    replaygain_source: Optional[str] = None  # "tag", or "lame" for the gain LAME stores in its header
+    error: Optional[str] = None             # the file could not be read at all
+
+
+#: Spellings of the ReplayGain track gain across containers. ID3 keeps it in a
+#: TXXX frame whose description is case-sensitive to mutagen, and taggers
+#: disagree on the case; Vorbis keys are case-insensitive; MP4 uses freeform
+#: iTunes atoms, again in either case.
+_REPLAYGAIN_NAMES = (
+    "TXXX:REPLAYGAIN_TRACK_GAIN",
+    "TXXX:replaygain_track_gain",
+    "replaygain_track_gain",
+    "----:com.apple.iTunes:replaygain_track_gain",
+    "----:com.apple.iTunes:REPLAYGAIN_TRACK_GAIN",
+)
+
+#: Containers whose audio is uncompressed or losslessly packed, so a bit depth
+#: is a real claim. MP4 is decided by its codec instead (ALAC is, AAC is not).
+_LOSSLESS_CONTAINERS = ("FLAC", "WAVE", "AIFF")
+
+
+def read_audio_header(filepath: str) -> AudioHeader:
+    """What `filepath`'s header and tags claim about its audio. Never raises.
+
+    The bitrate is mutagen's reading of the header: for an MP3 with a Xing or
+    LAME header that is the true average, but for a VBR file without one it is
+    the *first frame's* bitrate — which is how a ~130 kbps VBR file ends up
+    labelled 32 kbps, and why `quality` measures the stream instead of trusting
+    this.
+    """
+    from mutagen import File
+
+    try:
+        audio = File(filepath)
+    except Exception as e:
+        return AudioHeader(error=str(e) or type(e).__name__)
+    if audio is None:
+        return AudioHeader(error="not a recognized audio file")
+
+    info = audio.info
+    container = type(audio).__name__
+    codec = getattr(info, "codec", None) if container == "MP4" else None
+    lossless = container in _LOSSLESS_CONTAINERS or codec == "alac"
+
+    mode = getattr(info, "bitrate_mode", None)
+    mode_name = getattr(mode, "name", None)
+    bitrate = getattr(info, "bitrate", None)
+
+    gain, gain_source = _replaygain(audio.tags), "tag"
+    if gain is None:
+        gain, gain_source = getattr(info, "track_gain", None), "lame"
+
+    return AudioHeader(
+        container=container,
+        codec=codec,
+        bitrate_kbps=bitrate / 1000 if bitrate else None,
+        bitrate_mode=mode_name if mode_name and mode_name != "UNKNOWN" else None,
+        sample_rate=getattr(info, "sample_rate", None) or None,
+        bit_depth=(getattr(info, "bits_per_sample", None) or None) if lossless else None,
+        channels=getattr(info, "channels", None) or None,
+        duration_seconds=getattr(info, "length", None) or None,
+        encoder=_encoder(info, audio.tags),
+        replaygain_db=gain,
+        replaygain_source=gain_source if gain is not None else None,
+    )
+
+
+def _encoder(info, tags) -> Optional[str]:
+    """LAME's version and settings from the MP3's own header, else the encoder tag.
+
+    The header is preferred because LAME writes it while encoding, and a tagger
+    cannot touch it; the tag (`TSSE` and its kin) is whatever the last program to
+    *write* the file put there — "Lavf60.3.100" when ffmpeg re-encoded a rip.
+    """
+    lame = getattr(info, "encoder_info", "") or ""
+    if lame:
+        settings = getattr(info, "encoder_settings", "") or ""
+        return f"{lame} {settings}".strip()
+    if tags:
+        return _text(_tag(tags, "TSSE", "encoder", "\xa9too"))
+    return None
+
+
+def _replaygain(tags) -> Optional[float]:
+    """The ReplayGain track gain in dB, from text like "-6.54 dB", or None."""
+    if not tags:
+        return None
+    text = _text(_tag(tags, *_REPLAYGAIN_NAMES))
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", text or "")
+    return float(match.group()) if match else None
 
 
 def tracks_from_files(files: list[str], *, start_idx: int = 0) -> list[Track]:

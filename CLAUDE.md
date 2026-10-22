@@ -40,7 +40,7 @@ parked, not condemned.
 | `src/sdm/features/duplicates/` | `sdm duplicates` — duplicate scan over a music folder |
 | `src/sdm/features/rekordbox/` | `sdm rekordbox` — Rekordbox reader + duplicate detection |
 | `src/sdm/features/analyze/` | `sdm analyze` — beat grids + phrase structure off a Pioneer USB |
-| `src/sdm/features/quality/` | `sdm quality` — real-vs-claimed bitrate check |
+| `src/sdm/features/quality/` | `sdm quality` — audio measured (bitrate, transcode cutoff, loudness, peaks, clipping) beside what tags and Rekordbox claim |
 | `src/sdm/features/playlist_diff/` | `sdm playlist-diff` — Spotify playlist tracks a folder does not have. **Not** related to `features/spotify/` and imports nothing from it |
 | `src/sdm/features/playlist_export/` | `sdm playlist-export` — a Spotify playlist to CSV. Same: unrelated to `features/spotify/` |
 | `src/sdm/web/` | `sdm web` — local web UI. **A front end like `cli.py`, not a feature**; imports no feature. Stdlib only |
@@ -64,7 +64,7 @@ These are the point of the current structure. Breaking either undoes it.
 2. **`add_parser` stays cheap — argparse only.** Third-party imports belong
    inside the command handler (see any `features/*/__init__.py`), so
    `sdm --help` and unrelated subcommands work without every optional
-   dependency installed. `pyrekordbox`, `pyacoustid` and `pandas` are extras,
+   dependency installed. `pyrekordbox` and `numpy` are extras,
    not base dependencies.
 
 **`sdm.web` is not an exception to rule 1, because it is not a feature.** It
@@ -94,7 +94,8 @@ sdm duplicates "F:/Songs"            # needs fpcalc on PATH
 sdm duplicates "F:/Songs" --skip-fingerprint   # sizing run only, see below
 sdm rekordbox --usb-path D:/ --duplicates-by-name
 sdm analyze D:/                      # beat grids + phrases, no database needed
-sdm quality "F:/Songs"
+sdm quality "F:/Songs"               # measured vs claimed, -> out/quality/quality_Songs.csv
+sdm quality D:/ --limit 50           # a USB; sample before the ~1 h full run
 sdm playlist-diff "<spotify playlist link>" "F:\Songs"   # needs $SDM_SPOTIFY_CLIENT_ID
 sdm playlist-diff "D:\export.csv" "F:\Songs"             # CSV export: no account needed
 sdm playlist-export "<spotify playlist link>"            # -> out/playlist-export/<name>.csv
@@ -177,6 +178,27 @@ identical inputs.
   field is absent. Uncaught, any FLAC/OGG missing a title or artist lost its
   whole read: "Unknown" for both fields in `analyze`, no BPM or key in
   `duplicates`. The test clone has no such file, which is how it went unseen.
+  `read_audio_header` is the fifth reader and not about names: an
+  `AudioHeader` of what the file *claims* about its audio — bitrate and
+  CBR/VBR mode, sample rate, bit depth (lossless only), length, encoder,
+  ReplayGain — for `quality` to set beside a measurement. Its bitrate is
+  mutagen's reading of the header, which for a VBR mp3 without a Xing/LAME
+  header is the *first frame's*; that is the claim, and why `quality` measures
+  the stream rather than trusting it. The encoder prefers LAME's own header
+  (a tagger cannot touch it) over `TSSE`, which says "Lavf…" whenever ffmpeg
+  re-encoded a rip. ReplayGain comes from the tag in any of five spellings
+  (ID3's TXXX description is case-sensitive to mutagen, taggers disagree),
+  else from the gain LAME stores in its header — 3 of 600 sampled files carry
+  the tag, 139 the LAME gain.
+- `rekordbox_db.py` — opening a `master.db` (explicit, or the local install's)
+  and walking its content rows: what `rekordbox` and `quality` share, moved
+  out of `rekordbox/reader.py` under rule 1 (its `sdm rekordbox` exports were
+  byte-identical before and after). `load_files` converts rows to a plain
+  `RekordboxFile` — Rekordbox's own claims about a file: bitrate, sample rate,
+  bit depth, file type, length in whole seconds — where 0 means "not recorded"
+  and is read as None. Those claims are not always right: 54 rows of the
+  reference library list a ~130 kbps VBR mp3 as 32 kbps. Rows with no
+  `FolderPath` are streaming entries and skipped. Read-only.
 - `anlz.py` — reads Rekordbox's own analysis (beat grid, phrase structure) out
   of the `PIONEER/USBANLZ/` files on a Pioneer USB. Backs `sdm analyze`; see
   `docs/analyze.md`. **It walks the ANLZ tag chain and parses one tag at a time
@@ -443,7 +465,9 @@ output goes only to `--output-dir` or `--export-csv`. Preserve this.
 - `reader.py` — three-tier source resolution: an explicit/USB `master.db`, then
   the **local** Rekordbox `master.db` (the only source with analyzed BPM and
   key, so it is preferred even when a USB is given, then scoped to the USB by
-  filename via `_scope_to_usb`), then raw ID3 tags.
+  filename via `_scope_to_usb`), then raw ID3 tags. Opening the database and
+  walking its rows is `core/rekordbox_db.py`'s, shared with `quality`; what a
+  row becomes (a `Track`) stays here.
 - Detection itself lives in `core/duplicates.py` and `core/fingerprint.py` —
   shared with `sdm duplicates`, so a change there affects both. This feature
   supplies the track list and the config (BPM and key required, because a
@@ -505,23 +529,89 @@ exactly half the real tempo. The grid is a measurement; the tag is a claim.
 
 ### `quality`
 
-Thin wrapper over `analyzer.compare_and_report`, which shells out to
-`ffprobe`/`ffmpeg`. Returns a pandas DataFrame; the handler prints or writes it.
+What each file's audio **is**, beside what its metadata **claims** — the
+premise `analyze` rests on (the grid is a measurement, the tag is a claim),
+applied to bitrate, bandwidth, loudness and the rest. `__init__.py` (parser) →
+`command.py`: walk (`iter_audio_files`, every `AUDIO_EXTS` type, recursive, so
+a USB root works) → per file, on a worker thread: names
+(`core.tags.read_title_artist`), the file's claims (`core.tags.read_audio_header`),
+Rekordbox's claims (`claims.RekordboxIndex` over `core.rekordbox_db.load_files`)
+and the measurement (`measure.py`) → `compare.py` turns disagreements into
+flags → one CSV, `out/quality/quality_<folder>.csv`. **Read-only.** The old
+`analyzer.py` is gone: its "bitrate" was decoded PCM bytes over duration —
+`sample_rate * 32` for every file — and pandas went with it.
 
-**Pre-existing bug — the bitrate comparison is meaningless, and it is the
-headline feature.** `compute_audio_properties` decodes the file to 16-bit
-stereo PCM and divides the byte count by the duration, which is
-`sample_rate * 32` for every file however it was encoded — a 128 kbps rip and a
-true 320 both come out at ~1,411 kbps. It is then subtracted from
-`eyed3`'s `info.bit_rate[1]`, which is in *kbps*, so the two operands are also
-1000x apart. The sample-rate half of the report is sound. Fixing this is the
-starting point of the planned `quality` work below, not a side quest: the real
-measurement is `ffprobe`'s stream bitrate plus a spectral cutoff check, not a
-decode-and-divide.
+- `measure.py` — **one decode per file, and that is the design.** ffprobe for
+  the stream layout, then a single ffmpeg whose `ebur128` filter (with
+  `peak=true`) measures loudness and true peak *on the way through*, while the
+  PCM it outputs streams into numpy for clipping, the spectrum, effective bit
+  depth and stereo correlation. **`-v verbose` is load-bearing**: only at that
+  level does ffmpeg end with the input stream's packet bytes (bytes over decoded
+  duration is the true bitrate — tags and cover art are not packets) and its
+  decode-error count. Its stderr runs to several KB before any audio, more than
+  a Windows pipe buffers, so it is drained on a thread. The spectral cutoff is
+  the highest frequency above -60 dB relative to the 1–8 kHz median, and
+  *sharp* when the level falls ≥25 dB across it; the smoothing pads with edge
+  values, because zero padding lifted every lossy file's floor at Nyquist above
+  the threshold and made the whole library look full-band. Effective bit depth
+  is exact (an int ≤24 bits survives float32), so 16-bit audio padded to 24
+  shows. A file that decodes to nothing keeps only its error — ebur128 still
+  prints a 0.0 dB "peak" over no audio. The reference USB's one such file is an
+  AIFF whose FORM header claims 1,118 bytes of a 48 MB file.
+  **`Decoders` is load-bearing for cancel.** Ctrl-C (and `sdm web`'s cancel,
+  the same signal) reaches the ffmpegs running at that moment, but worker
+  threads start fresh ones from queued files in the half-second before the
+  main thread notices, and each of those decoded a whole track: a cancel took
+  9.7 s. Every ffprobe/ffmpeg is registered; an aborted run kills what is in
+  flight and starts nothing more — 0.8 s, no process left. Killing is fine
+  here, unlike for the Python process, because these only read.
+- `claims.py` — `RekordboxIndex`: a file's row by path, then by
+  (name, size) — how a USB copy is recognized, 3,064 of 3,069 on the reference
+  USB — then by name only if exactly one row has it. A shared name matches
+  nothing rather than putting another file's claims beside this measurement.
+  The report's `rb_match` says which.
+- `compare.py` — `Flag(kind, text)`. **Every threshold is named there and was
+  set against the full reference library, not picked** — read the comments
+  before moving one. A "?" in a kind (`transcode?`, `lossy source?`,
+  `upsampled?`) is evidence, not a verdict, as `maybe` is in `playlist-diff`.
+  Bitrate is compared only for lossy audio; a lossless file's is just its
+  compression ratio.
+- `command.py` — threads, not processes: the work is ffmpeg plus numpy that
+  releases the GIL, and processes measured only 8% faster. The main thread
+  waits with a 0.5 s timeout so KeyboardInterrupt lands. Results are sorted by
+  path, so a report is byte-identical whatever `--jobs` was (checked at 2 and
+  4). File names are printed only after the CSV is written (cp1252, see
+  "Planned fixes"). Columns are grouped by aspect: measured (no prefix), then
+  `meta_` (the file's header and tags), then `rb_`; `issues` holds the flag
+  kinds and `flags` the sentences, same order — the web view filters on the
+  former.
 
-`compare_and_report` uses `os.listdir` and an `endswith('.mp3')` test, so it is
-top-level-only and mp3-only — the one feature that does not use
-`core.track.iter_audio_files`.
+The Rekordbox claims come from the **local** `master.db` (or `--db-path`), read
+through pyrekordbox; without it, or with `--no-rekordbox`, the `rb_` columns are
+blank and the run says why. A USB's own `export.pdb` is not read — pyrekordbox
+0.4.4 cannot parse DeviceSQL — so a USB without the local library behind it
+gets the file's own claims only. That reader is the next piece of this feature.
+
+**Measured baseline** (`test-sdm-lib-clone/pioneer-usb-full-clone`, 3,664 files,
+default `--jobs` 8): 52m20s warm, 63m cold; 3,663 measured, 1 undecodable (the
+AIFF above). Rekordbox matched 3,069 (name+size 3,064, name 5). **484 flagged**:
+clipping 227, transcode? 196 (123 at 320 kbps, 70 at 192 — most with no encoder
+tag, converter-site style), rekordbox bitrate 66 (VBR without a Xing header:
+Rekordbox reads the first frame, so 48 show 32 kbps and 12 show 320), mono in
+stereo 23, header length 1 (a file claiming 8:04 that holds 7:00), and
+undecodable 1. Loudness median -9.9 LUFS (p1 -18.4, p99 -6.2); true peak above 0 dBTP in
+3,071; clip rate median 0.0009%, p90 0.054%. Cutoffs: honest 128s at
+16.1–16.9 kHz, honest 192s at 18.8–19.1, honest 320s at 19.5 and up, most at
+20–20.5. Use these as the regression check: different counts on this folder
+mean the detector or a threshold changed. Two runs were cell-for-cell
+identical in every measured and claimed column.
+
+**Why a run is slow on this machine, and what it is not.** ~2 s of ffmpeg per
+track, true peak a third of it (ebur128's 4x oversampling; dropping it saves
+~30% of wall time). But 8 jobs on 8 cores gave only 1.3–2.5x over serial, and
+not because of the GIL: plain `ffmpeg → NUL` scaled the same. The antivirus
+(`fmservice64`) used ~2.5 cores scanning every file ffmpeg opened while total
+CPU sat at 38%. More `--jobs` will not help past ~4 here; `--limit` samples.
 
 `--output-csv` requires a value here, while `rekordbox --export-csv` accepts the
 bare flag. That asymmetry is deliberate: this parser has a positional
@@ -652,6 +742,11 @@ needs no extra; Node is a build-time dependency of the page, never of the server
   within a group; warns on metadata-only groups), `PlaylistDiffView` (only for
   files in a `playlist-diff` folder — catalog's `missing_metadata_*.csv` has the
   same shape of name — and it checks the columns, falling back to a table),
+  `QualityView` (any `quality_*.csv`, columns checked the same way: each
+  aspect's measured value with its `meta_`/`rb_` claims beneath, a contradicted
+  claim highlighted by `compare.py`'s tolerances — the flags themselves always
+  come from the report, never recomputed in the page — issue chips from the
+  `issues` column, and a measured / file / Rekordbox table per track),
   `TableView` for everything else. A play button appears only on a path that is
   absolute on this machine, because analyze's `device_path` (`/Contents/…mp3`)
   is a USB path the server cannot open. `npm run dev` proxies `/api` and `/auth`
@@ -667,7 +762,12 @@ a real `duplicates` run mid-fingerprint with a borrowed fpcalc (cancelled in
 0.3s, `tmp/` empty after), `shutdown()` with a job running, the Vite proxy, and
 headless Edge via `puppeteer-core` for every view in light, dark and phone
 width (A/B position carry-over measured, zero console errors). Not yet done: a
-Spotify login driven from the UI with a real client ID.
+Spotify login driven from the UI with a real client ID. `QualityView` the same
+way: a `quality` run started from the form, its output opened from the job
+page, chips, sort, details, highlighted claims, the Table tab, light/dark/phone
+with no page overflow; the full 3,664-row report loads in 170 ms. A `quality`
+job cancelled from the page ended in 0.8 s with its whole process tree gone and
+the previous report untouched.
 
 ## The browser build — sdm.eigenomar.com
 
@@ -849,7 +949,9 @@ Reproduced from a fresh PowerShell 5.1 with `> file`:
 - `playlist-diff`: each track's artist and title, printed **before any report
   is written**, so the run loses everything.
 - Exposed but not reproduced: `playlist-export` (playlist name, output path)
-  and `quality` (`df.to_string()` includes file names). `analyze`,
+  and `quality` (the path of each file it cannot decode — printed only after
+  the report is written, so a crash there costs the summary, not the run).
+  `analyze`,
   `duplicates` and `rekordbox` print only paths the user typed, and counts;
   every `--help` redirects fine. The test clone has 48 non-cp1252 audio paths,
   so a redirected full-library `sdm catalog` would crash.
@@ -917,21 +1019,19 @@ directory, so check how the sidecar is read back before choosing.
 
 ## Planned work
 
-Five features are designed but **not implemented** — see the "Ideas" section at
+Four features are designed but **not implemented** — see the "Ideas" section at
 the end of `README.md` for what each one is and why. Nothing named there exists
 in the tree; do not read a mention of one as a module to import or extend.
+(The fifth, a deeper `sdm quality`, is built; see its section above.)
 
 1. **Library manager** — Rekordbox playlists, bulk tag/metadata edits, analysis
    import/export. New feature package; playlists first, because they are plain
    `master.db` rows and need no new format work.
-2. **Deeper `sdm quality`** — true bitrate and transcode detection, clipping,
-   EBU R128 loudness, diffed against the tags and the database. This one
-   **extends the existing `quality` feature**; it is not a new command.
-3. **Serato / Traktor export** — one-way, onto a differently formatted USB.
-4. **`sdm dig`** — finds records *not* in the library, from seeds (genre, style,
+2. **Serato / Traktor export** — one-way, onto a differently formatted USB.
+3. **`sdm dig`** — finds records *not* in the library, from seeds (genre, style,
    artist, track, label, era, BPM/key) tuned by underground level and source,
    then filtered against what is already owned.
-5. **Genre/style enrichment** — fills in what the local library's tracks
+4. **Genre/style enrichment** — fills in what the local library's tracks
    actually are, from Discogs styles, Last.fm tags and MusicBrainz. **Build this
    before `dig`:** scoring a result as a percentile within its genre requires
    knowing the genre of the owned tracks it is being compared against.
@@ -949,10 +1049,11 @@ What is already decided, and what the existing structure forces:
   anything.
 - The manager will want readers `rekordbox` already has (`reader.py`'s source
   resolution) and `analyze` already has (`core/anlz.py`). Rule 1 applies: shared
-  pieces move to `core` first, they are never imported across features.
+  pieces move to `core` first, they are never imported across features —
+  `core/rekordbox_db.py` is where that move started, for `quality`.
 - New dependencies stay extras, behind the handler, per rule 2 — Rekordbox
-  writes via `pyrekordbox`, transcode detection via whatever does the FFT.
-  `sdm --help` must keep working with none of them installed.
+  writes via `pyrekordbox`. `sdm --help` must keep working with none of them
+  installed.
 - **`dig` breaks assumptions the local-only features share, so do not model it
   on them.** `playlist-diff`/`playlist-export` are the nearest precedent
   (network, a credential, a reproducibility gap: a playlist changes under

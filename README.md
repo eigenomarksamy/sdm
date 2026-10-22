@@ -95,14 +95,15 @@ parts.
 | | Cue points | Hot cues and memory cues | — | planned, low value — one hot cue in 3,665 tracks |
 | | Waveforms | The rendered waveform data | — | planned, skipped on purpose — parsing them takes a scan from 49s to 8m28s |
 | | Musical key | — | — | n/a — not in ANLZ at any version; use `rekordbox` |
-| `quality` | *(the command)* | Measures what a file **actually is** and diffs it against what the tags **claim** | A directory (top level only), `--output-csv` | partial |
-| | Sample rate, real vs claimed | `ffprobe`'s decoded rate against eyed3's | The file | done |
-| | Bitrate, real vs claimed | Should expose a low-quality re-encode passed off as high | The file | stub — **the number is not a bitrate**, see below |
-| | Report | A pandas DataFrame, printed or written to CSV | `--output-csv` | done |
-| | Recursive scan | A library rather than one folder | — | planned — `os.listdir`, top level only |
-| | Non-MP3 files | The rest of `AUDIO_EXTS` | — | planned — `.mp3` only |
-| | Clipping, loudness, true peak | Peak levels, clipped-sample count, EBU R128 loudness and dynamic range | — | planned |
-| | Transcode detection | The spectral cutoff that betrays a 128 kbps rip relabelled as 320 | — | planned |
+| `quality` | *(the command)* | Measures what each file's audio **actually is** and puts it beside what its tags and Rekordbox **claim**. **Read-only** | A folder or a Rekordbox USB, searched recursively, every audio type; `--output-csv`, `--jobs`, `--limit` | done |
+| | Bitrate | The true average, from the bytes of audio the stream holds, beside the header's figure and Rekordbox's | The file | done — catches the VBR files Rekordbox lists at 32 kbps |
+| | Transcode detection | The spectral cutoff: a "320" that stops at 16 kHz has a 128's spectrum; also a lossless file with a lossy cliff, and a hi-res file upsampled | The decoded audio | done — flagged with a "?": evidence, not a verdict |
+| | Sample rate and bit depth | As decoded, beside the claims; the bits a lossless file actually *uses*, so 16-bit audio padded to 24 shows | The file | done |
+| | Loudness | EBU R128 integrated loudness and loudness range, and the ReplayGain that implies, beside any ReplayGain the file carries | ffmpeg's `ebur128` | done |
+| | Peaks and clipping | True peak, sample peak, peak-to-loudness ratio, and the share of samples at or past full scale | The decoded audio | done |
+| | Integrity | Frames that fail to decode, files that decode to nothing, lengths that disagree with the header, stereo that is really mono or out of phase | The decoded audio | done |
+| | Rekordbox claims | Bitrate, sample rate, bit depth and length as the database records them, matched by path, or by name and size for a USB copy | The local `master.db`, or `--db-path` | partial — not from a USB's own export (`export.pdb`) yet, so a USB alone gets the file columns only |
+| | Report | One CSV row per file: each aspect measured, then claimed; then the issues found | `out/quality/quality_<folder>.csv` | done |
 | `playlist-diff` | *(the command)* | Lists the tracks of a Spotify playlist that a music folder does **not** have. **Read-only** on both sides | A playlist link or a CSV export of one, and a directory | done |
 | | Spotify API | Reads a playlist after a browser login (PKCE; no secret, read-only scopes) | A link, URI or ID; `--client-id` / `SDM_SPOTIFY_CLIENT_ID` | partial — **only playlists you own or collaborate on**, a Spotify-imposed limit since February 2026; the app owner needs Premium |
 | | CSV import | Any playlist, via an export from Exportify, TuneMyMusic and the like; columns found by name | A `.csv` path in place of the link | done |
@@ -119,22 +120,14 @@ parts.
 | | Jobs | Each run a subprocess: live log, progress where the command prints `N/M`, cancel that behaves like Ctrl-C | — | done — in memory, gone on restart; the reports stay |
 | | Duplicate groups | Copies side by side, differences highlighted, A/B playback that keeps the position between copies | Any `duplicates.json` (`duplicates` or `rekordbox`) | done |
 | | Playlist diff | Missing / maybe / owned tabs, local file playback, Spotify links, copy-as-list | `missing_`/`matched_<playlist>.csv` | done |
+| | Audio quality | Each file's measurements with its claims beside them, disagreements highlighted; filter by issue; a full measured / file / Rekordbox comparison per track; playback | `quality_<folder>.csv` | done |
 | | Report tables | Any CSV under `out/`, paged, filtered and sorted server-side; audio paths get a play button | — | done — files over 64 MB are paged only |
 | | Beat grid and phrase view | `analyze`'s phrases on a timeline, with playback | — | planned — opens as a table today |
 | | Access from other devices | — | — | n/a, deliberately — bound to 127.0.0.1, see below |
 | *new* | Library manager | Rekordbox playlists, bulk tag and metadata edits, analysis import/export | A `master.db`, and a backup of it | planned |
-| *new* | Deeper `quality` | The four `quality` rows above, together | A directory, as today | planned — extends `quality`, not a new command |
 | *new* | Serato / Traktor export | One-way export of library and playlists onto a USB another ecosystem reads | The Rekordbox library, plus a destination USB | planned |
 | *new* | `dig` | Finds records **not** in the library: seeds of genre, artist, track or label, tuned by underground level and source, cross-referenced against what is already owned | Seeds and tunables, plus API tokens; the first network-dependent feature | planned |
 | *new* | Genre enrichment | Fills in genres and styles for tracks already owned, from Discogs, Last.fm and MusicBrainz | The local library, plus API tokens | planned — a prerequisite for `dig`'s scoring, not just a companion |
-
-> **`sdm quality`'s bitrate column does not measure bitrate.** `analyzer.py`
-> decodes the file to 16-bit stereo PCM and divides the byte count by the
-> duration — which is `sample_rate x 32` for *every* file regardless of how it
-> was encoded, so a 128 kbps rip and a true 320 both report ~1,411 kbps. It is
-> then compared against eyed3's value in kbps, so the units differ by 1000 as
-> well. The sample-rate half of the report is sound; the bitrate half needs the
-> rewrite described under [Ideas](#ideas--not-implemented).
 
 ## Install
 
@@ -143,7 +136,7 @@ pip install -e .              # base: catalog, duplicates, playlist-diff/-export
 pip install -e ".[all]"       # everything
 pip install -e ".[rekordbox]" # + Rekordbox reading and fingerprinting
 pip install -e ".[analyze]"   # + beat grids and phrases off a Pioneer USB
-pip install -e ".[quality]"   # + the bitrate checker
+pip install -e ".[quality]"   # + audio quality measurement (numpy)
 ```
 
 Requires Python 3.9+. Two features need external binaries on PATH:
@@ -180,7 +173,7 @@ that produced it:
   duplicates/  duplicates.csv, duplicates.json
   rekordbox/   duplicates.csv, duplicates.json, tracks.csv
   analyze/     analysis.csv, phrases.csv, analysis.json (+ beats.csv on request)
-  quality/     the bitrate report, when --output-csv is given
+  quality/     quality_<folder>.csv
   playlist-diff/  missing_<playlist>.csv, matched_<playlist>.csv
   playlist-export/  <playlist>.csv
   logs/        download.log — only while sdm download was enabled
@@ -536,13 +529,67 @@ Format details, parser workarounds and the full baseline:
 
 ## `sdm quality`
 
-Decodes each file with `ffprobe`/`ffmpeg` to measure its *actual* sample rate
-and bitrate, then diffs those against what the ID3 tags claim — useful for
-spotting re-encoded files passed off as high quality.
+What each file's audio **actually is**, next to what its metadata **claims**.
+Every file under a folder or a Rekordbox USB is decoded once and measured, and
+each measurement is reported beside the file's own header and tags and — when a
+Rekordbox database can be read — what Rekordbox recorded about the same file.
+Read-only: files are decoded, never written.
 
 ```ps1
-sdm quality "F:/Songs" --output-csv quality_report.csv
+sdm quality "F:\Songs"                       # -> out/quality/quality_Songs.csv
+sdm quality D:\ --limit 50                   # a Rekordbox USB; the first 50 files to start with
+sdm quality "F:\Songs" --no-rekordbox        # the files' own claims only
+sdm quality D:\ --db-path E:\backup\master.db
 ```
+
+Needs `ffmpeg` and `ffprobe` on PATH and `pip install -e ".[quality]"`
+(numpy). The Rekordbox columns also need `.[rekordbox]`; without it, or with no
+Rekordbox installed, they are left blank and the run says so.
+
+**Measured**, from the decoded audio:
+
+| | |
+| --- | --- |
+| Bitrate | The true average: the bytes of audio in the stream over its decoded length, so tags and cover art do not count |
+| Spectral cutoff | The highest frequency with content, and whether it ends in a cliff (an encoder's lowpass) or fades |
+| Sample rate, bit depth | As decoded; for lossless files, the bits actually *used* |
+| Loudness | EBU R128 integrated loudness (LUFS) and loudness range (LU), and the ReplayGain they imply |
+| Peaks | True peak (dBTP, oversampled), sample peak (dBFS), and peak-to-loudness ratio |
+| Clipping | Samples at or past full scale, and their share. A lossy decode can exceed full scale, and those samples clip on any fixed-point output, a CDJ's included |
+| Stereo | Channel correlation: 1 is mono in two channels, below 0 cancels when summed to mono |
+| Integrity | Frames that failed to decode, and files that decode to nothing |
+
+**Claimed**, in the `meta_` columns (the file's own header and tags: bitrate
+and CBR/VBR mode, sample rate, bit depth, length, encoder, ReplayGain) and the
+`rb_` columns (Rekordbox's database: bitrate, sample rate, bit depth, length).
+Each claim sits next to the measurement it is about.
+
+**Issues**, where they disagree or the audio has a problem — the `issues`
+column names them, `flags` says each in a sentence:
+
+| Issue | Means |
+| --- | --- |
+| `transcode?` | A lossy file whose spectrum stops short of its bitrate: a 320 kbps file cut at 16 kHz has the spectrum of a 128 |
+| `lossy source?` | A lossless file with a lossy encoder's cliff in its spectrum |
+| `upsampled?` | A file above 44.1 kHz with nothing above the original rate's limit |
+| `padded bits` | Fewer bits used than stored: 16-bit audio in a 24-bit file |
+| `clipping` | Too large a share of samples at full scale |
+| `decode errors`, `undecodable` | Corrupt frames, or no audio at all |
+| `mono in stereo`, `out of phase` | Both channels the same; or channels that cancel on a mono system |
+| `header …`, `rekordbox …` | A claimed bitrate, sample rate, bit depth or length that the audio contradicts |
+
+**An issue with a "?" is evidence, not a verdict.** A spectral cutoff is what a
+transcode leaves behind, and also what a few honest encoders and lo-fi masters
+produce. The numbers are in the row; play the file to decide. `sdm web` opens
+the report in a dedicated view built for exactly that.
+
+On the reference USB (3,664 files) it took 52 minutes and flagged 484 files:
+227 clipping, 196 likely transcodes (123 of them sold as 320 kbps), 66 with a
+bitrate Rekordbox has wrong (VBR files it reads as 32 or 320 kbps), 23 mono in
+stereo, one truncated by a minute, one that does not decode. Each file costs
+~2 s of ffmpeg time, so start with `--limit` on a large library; past ~4
+`--jobs` the disk (and on Windows, real-time antivirus scanning every file
+ffmpeg opens) sets the pace rather than the CPU.
 
 ---
 
@@ -771,6 +818,12 @@ restart; a bookmark of an old one says so.
 - **Playlist diffs** (`missing_`/`matched_<playlist>.csv`): Missing, Maybe and
   Owned tabs; play the local file a "maybe" nearly matched to decide by ear;
   open each missing track on Spotify; copy the list as `Artist - Title` lines.
+- **Audio quality** (`quality_<folder>.csv`): every file's measurements with
+  what its tags and Rekordbox claim written underneath, a claim the
+  measurement contradicts highlighted. Filter by issue (*transcode?*,
+  *clipping*, *rekordbox bitrate*, …), sort by loudness, true peak, clipping
+  or cutoff, and open any track into a full measured / file metadata /
+  Rekordbox comparison, with playback.
 - **Any other CSV under `out/`** as a table, filtered and sorted on the server,
   with a play button on every audio path.
 
@@ -883,12 +936,13 @@ src/sdm/
   core/               shared, dependency-light
     track.py          the one Track model
     text.py           title/artist normalization (two strictnesses, on purpose)
-    tags.py           ID3/Vorbis/MP4 readers
+    tags.py           ID3/Vorbis/MP4 readers — names, and what a file claims about its audio
     grouping.py       union-find, for collapsing pairwise matches into groups
     duplicates.py     the two-stage detector, shared by two features
     fingerprint.py    chromaprint via fpcalc
     fpcalc_fetch.py   borrows an fpcalc for one run when none is installed
     anlz.py           Rekordbox ANLZ reader — beat grids and phrase structure
+    rekordbox_db.py   opening a master.db and reading its rows, for any feature
     playlist.py       playlist model + its CSV format, read and write
     spotify.py        Spotify login (PKCE) and playlist reading
     report.py         CSV/JSON/sidecar writers — how a file is written
@@ -957,34 +1011,6 @@ feature behind its own command, so a bug in a writer can never be reached from
 a command whose whole contract is that it touches nothing. Backing up
 `master.db` before a write, and refusing to run at all while Rekordbox holds
 the database open, belong to the feature rather than to the user's discipline.
-
-### Real audio quality, measured
-
-`sdm quality` currently compares actual sample rate and bitrate against what the
-tags claim. The idea is to make the measurement side a real analysis of the
-audio:
-
-- **True bitrate**, and the spectral cutoff that betrays a 128 kbps mp3
-  re-encoded as a "320", or a lossless container filled with lossy audio.
-- **Sample rate and bit depth** as decoded, not as declared.
-- **Clipping** — sample peak, true peak, and how many samples are actually
-  clipped.
-- **Loudness** — EBU R128 integrated LUFS, loudness range, and dynamic range,
-  which is what decides whether a track will sit level in a set.
-
-Then diff all of it against what the file's tags and the Rekordbox database
-claim about it.
-
-This is the one idea here that is an extension rather than a new feature:
-`ffmpeg` already supplies most of it (`ebur128`, `astats`, `volumedetect`) and
-`sdm quality` already shells out to `ffprobe`/`ffmpeg`. The part it does not
-supply is the spectral analysis behind transcode detection, which needs a real
-FFT over decoded audio and is therefore the expensive half — likely opt-in, as
-fingerprinting is in `sdm duplicates`.
-
-The premise is the same one `sdm analyze` rests on: a stated bitrate is a claim
-by whoever encoded the file, exactly as a `TBPM` tag is a claim against the beat
-grid. This would measure it.
 
 ### Export to other DJ ecosystems
 

@@ -602,6 +602,121 @@ button.more {
   margin: 0.25rem 0 0.75rem;
 }
 
+/* --- quality ------------------------------------------------------------- */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+}
+button.chip {
+  border-radius: 999px;
+  padding: 0.15rem 0.7rem;
+  font-size: 0.85rem;
+}
+button.chip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+button.chip.bad:not(.active) {
+  border-color: var(--bad);
+}
+button.chip.warn:not(.active) {
+  border-color: var(--warn);
+}
+.chip-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.quality-table td {
+  vertical-align: middle;
+}
+/* A number and its unit on one line: "-10.4 LUFS" broken in two reads as two values. */
+.quality-table td.num {
+  white-space: nowrap;
+}
+.quality-table .file-cell {
+  max-width: 280px;
+}
+/* Not .file-folder: its right-to-left direction, which elides a folder path
+   from the start, reorders a file name's leading "5. " to the end. */
+.file-sub {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.claims.encoder {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quality-table tr.open td {
+  border-bottom: 0;
+}
+/* A claim under the value it is a claim about. */
+.claims {
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+.claims .diff {
+  color: var(--text);
+  padding: 0 0.15rem;
+  border-radius: 3px;
+}
+.issue-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.issue-list .badge {
+  white-space: nowrap;
+}
+button.toggle {
+  width: 24px;
+  justify-content: center;
+  padding: 0.1rem 0;
+}
+.issue-bad {
+  background: var(--bad-soft);
+  color: var(--bad);
+  border-color: transparent;
+}
+.issue-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: transparent;
+}
+.detail-row > td {
+  background: var(--surface-2);
+}
+.quality-detail .toolbar {
+  margin-top: 0;
+}
+.flag-list {
+  margin: 0 0 0.6rem;
+  padding-left: 1.2rem;
+}
+.compare-table {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 900px;
+}
+.compare-table th {
+  position: static;
+}
+.compare-table tbody th {
+  background: transparent;
+  color: var(--muted);
+  font-weight: 500;
+}
+
 button.play {
   width: 28px;
   height: 28px;

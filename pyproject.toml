@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sdm"
 version = "0.2.0"
-description = "Music library toolchain: catalog local files, reconcile with Rekordbox, verify audio quality."
+description = "Music library toolchain: catalog local files, reconcile with Rekordbox, measure audio quality."
 requires-python = ">=3.9"
 dependencies = [
     "eyed3",
@@ -30,8 +30,12 @@ rekordbox = [
 analyze = [
     "pyrekordbox>=0.4.0",
 ]
+# `sdm quality` measures the decoded audio with numpy (clipping, the spectrum
+# behind transcode detection, bit depth); ffmpeg does the decoding and the
+# loudness. Its Rekordbox columns also need pyrekordbox - `.[rekordbox]` - and
+# are left blank without it.
 quality = [
-    "pandas",
+    "numpy",
 ]
 all = [
     "sdm[rekordbox,analyze,quality]",

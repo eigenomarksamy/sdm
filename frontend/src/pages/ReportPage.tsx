@@ -5,6 +5,7 @@ import { ago, baseName, bytes, dirName } from "../format";
 import { href } from "../router";
 import { DuplicatesView } from "../views/DuplicatesView";
 import { PlaylistDiffView } from "../views/PlaylistDiffView";
+import { QualityView } from "../views/QualityView";
 import { TableView } from "../views/TableView";
 
 /**
@@ -12,12 +13,14 @@ import { TableView } from "../views/TableView";
  * feature's own: `duplicates.json` is `write_duplicate_report`'s in any folder
  * (`sdm duplicates` and `sdm rekordbox` both write it), while playlist-diff's
  * missing_/matched_ pair also needs its folder, because catalog's
- * `missing_metadata_<folder>.csv` has the same shape of name. A file that
- * matches nothing still opens as a table.
+ * `missing_metadata_<folder>.csv` has the same shape of name. `quality_<folder>.csv`
+ * is quality's default name; its view checks the columns, so a stray file of
+ * that name still opens as a table. A file that matches nothing opens as one too.
  */
 export type View =
   | { kind: "duplicates"; json: string }
   | { kind: "playlist"; missing: string; matched: string; name: string }
+  | { kind: "quality" }
   | { kind: "table" }
   | { kind: "raw" };
 
@@ -32,13 +35,22 @@ export function viewFor(path: string): View {
   if (pl && baseName(folder) === "playlist-diff") {
     return { kind: "playlist", missing: sibling(`missing_${pl[2]}.csv`), matched: sibling(`matched_${pl[2]}.csv`), name: pl[2] };
   }
+  if (/^quality_.+\.csv$/i.test(name)) return { kind: "quality" };
   if (name.toLowerCase().endsWith(".csv")) return { kind: "table" };
   return { kind: "raw" };
 }
 
 export function viewLabel(path: string): string {
-  return { duplicates: "duplicate groups", playlist: "playlist diff", table: "table", raw: "file" }[viewFor(path).kind];
+  return {
+    duplicates: "duplicate groups",
+    playlist: "playlist diff",
+    quality: "audio quality",
+    table: "table",
+    raw: "file",
+  }[viewFor(path).kind];
 }
+
+const TAB_LABEL = { duplicates: "Groups", playlist: "Playlist diff", quality: "Quality" } as const;
 
 export function ReportPage({ path, forceTable }: { path: string; forceTable: boolean }) {
   const [info, setInfo] = useState<ReportFile | null>(null);
@@ -52,7 +64,7 @@ export function ReportPage({ path, forceTable }: { path: string; forceTable: boo
   if (!path) return <Empty>No report chosen.</Empty>;
   const view = viewFor(path);
   const isCsv = path.toLowerCase().endsWith(".csv");
-  const dedicated = view.kind === "duplicates" || view.kind === "playlist";
+  const dedicated = view.kind === "duplicates" || view.kind === "playlist" || view.kind === "quality";
   const showTable = isCsv && (forceTable || !dedicated);
 
   return (
@@ -71,7 +83,7 @@ export function ReportPage({ path, forceTable }: { path: string; forceTable: boo
           {isCsv && dedicated && (
             <div className="segmented">
               <a className={!showTable ? "active" : ""} href={href("/report", { path })}>
-                {view.kind === "duplicates" ? "Groups" : "Playlist diff"}
+                {TAB_LABEL[view.kind]}
               </a>
               <a className={showTable ? "active" : ""} href={href("/report", { path, view: "table" })}>
                 Table
@@ -90,6 +102,8 @@ export function ReportPage({ path, forceTable }: { path: string; forceTable: boo
         <DuplicatesView path={view.json} />
       ) : view.kind === "playlist" ? (
         <PlaylistDiffView missing={view.missing} matched={view.matched} name={view.name} fallback={path} />
+      ) : view.kind === "quality" ? (
+        <QualityView path={path} />
       ) : (
         <Empty>
           No view for this file type. <a href={rawUrl(path)} target="_blank" rel="noreferrer">Open it raw</a>.

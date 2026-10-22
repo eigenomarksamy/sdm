@@ -18,8 +18,9 @@ pyrekordbox's ORM objects.
 from __future__ import annotations
 
 import os
-from typing import Iterator, Optional
+from typing import Optional
 
+from sdm.core.rekordbox_db import iter_content, open_database
 from sdm.core.tags import tracks_from_files
 from sdm.core.track import AUDIO_EXTS as _AUDIO_EXTS, Track, iter_audio_files
 
@@ -75,11 +76,9 @@ def _load_v6_tracks(db_path: str, usb_path: Optional[str]) -> list[Track]:
     if not os.path.isfile(db_path):
         raise FileNotFoundError(f"master.db not found at {db_path}")
 
-    from pyrekordbox import Rekordbox6Database
-
-    db = Rekordbox6Database(path=db_path)
+    db = open_database(db_path)
     tracks: list[Track] = []
-    for row in _iter_content_v6(db):
+    for row in iter_content(db):
         file_path = _resolve_file_path(row, usb_path=usb_path)
         if not file_path:
             continue
@@ -99,11 +98,9 @@ def _load_v6_tracks(db_path: str, usb_path: Optional[str]) -> list[Track]:
 
 def _load_local_master_db() -> list[Track]:
     """Load every track from the local Rekordbox master.db (auto-located)."""
-    from pyrekordbox import Rekordbox6Database
-
-    db = Rekordbox6Database()
+    db = open_database()
     tracks: list[Track] = []
-    for row in _iter_content_v6(db):
+    for row in iter_content(db):
         folder = _get(row, "FolderPath") or ""
         if not folder:
             continue
@@ -166,14 +163,6 @@ def _scope_to_usb(local_tracks: list[Track], contents_dir: str) -> list[Track]:
 def _load_id3_tracks(contents_dir: str, usb_root: str) -> list[Track]:
     """Walk Contents/ and read ID3 tags + duration from audio files."""
     return tracks_from_files(list(iter_audio_files(contents_dir)), start_idx=0)
-
-
-def _iter_content_v6(db) -> Iterator:
-    if hasattr(db, "get_content"):
-        return iter(db.get_content())
-    if hasattr(db, "djmd_content"):
-        return iter(db.djmd_content)
-    raise RuntimeError("Unrecognized pyrekordbox v6 API.")
 
 
 def _get(row, attr: str, default=None):
