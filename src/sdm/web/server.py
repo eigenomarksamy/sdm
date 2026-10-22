@@ -42,6 +42,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from sdm import __version__
 from sdm.core import paths
+from sdm.core.spotify import CLIENT_ID_ENV, DEFAULT_REDIRECT_URI, REDIRECT_URI_ENV
 from sdm.core.track import AUDIO_EXTS
 from sdm.web import DEFAULT_PORT, schema
 from sdm.web.jobs import Busy, JobManager
@@ -246,7 +247,9 @@ class _Handler(BaseHTTPRequestHandler):
                 "tmp_root": app.tmp_root,
                 "cwd": app.cwd,
                 "sep": os.sep,
-                "spotify_client_id": bool(os.environ.get("SDM_SPOTIFY_CLIENT_ID")),
+                "spotify_client_id": bool(os.environ.get(CLIENT_ID_ENV)),
+                # What the Spotify setup guide tells the user to register.
+                "spotify_redirect_uri": os.environ.get(REDIRECT_URI_ENV) or DEFAULT_REDIRECT_URI,
             })
         if path == "/api/commands" and method == "GET":
             return self._send_json(schema.commands())

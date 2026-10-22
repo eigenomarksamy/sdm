@@ -8,6 +8,8 @@ export interface Session {
   cwd: string;
   sep: string;
   spotify_client_id: boolean;
+  /** Where Spotify sends a login back: what the setup guide says to register. */
+  spotify_redirect_uri: string;
 }
 
 export type FieldKind = "flag" | "optional_value" | "choice" | "integer" | "number" | "text";
@@ -206,6 +208,28 @@ export interface BrowserHooks {
   isPlayable(path: string): boolean;
   /** A URL for the player. Async, because a folder handle opens files lazily. */
   audioSrc(path: string): Promise<string>;
+  /** The page's own Spotify login (browser/spotify.ts); `sdm web`'s commands log in themselves. */
+  spotify: SpotifyHooks;
+}
+
+export interface SpotifyState {
+  clientId: string;
+  loggedIn: boolean;
+  /** Spotify's display name for the account, when it said. */
+  user: string | null;
+  /** Back from Spotify's login page, trading the code for a token. */
+  finishing: boolean;
+  error: string | null;
+}
+
+export interface SpotifyHooks {
+  subscribe(listener: (state: SpotifyState) => void): () => void;
+  setClientId(id: string): void;
+  /** Send the tab to Spotify's login page, which sends it back here. */
+  login(): Promise<void>;
+  logout(): void;
+  /** What the reload a login costs would lose from this tab ("2 reports"), or null. */
+  wouldForget(): string | null;
 }
 
 export const browser: BrowserHooks | null = null;

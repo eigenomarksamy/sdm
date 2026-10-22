@@ -1,12 +1,16 @@
 # Headers for every file of the browser build. Cloudflare Workers reads this
 # from the assets directory (dist/); Vite copies it there under --mode browser.
 #
-# The Content-Security-Policy is what makes "nothing leaves your browser" a
-# rule the browser enforces rather than a claim the page makes: connect-src
-# 'self' blocks every fetch, XHR, WebSocket and beacon to any other origin, in
-# the page and in the Python worker alike, and this origin serves only static
-# files. 'wasm-unsafe-eval' lets Pyodide compile its WebAssembly, and nothing
-# else. media-src blob: is the player, which plays picked files by blob URL.
+# The Content-Security-Policy is what makes "your files never leave your
+# browser" a rule the browser enforces rather than a claim the page makes:
+# connect-src blocks every fetch, XHR, WebSocket and beacon to any origin not
+# listed, in the page and in the Python worker alike. This origin serves only
+# static files. The two Spotify hosts serve the playlist commands: the page
+# logs in at accounts.spotify.com, and it and the Python worker read
+# api.spotify.com with read-only scopes. Nothing else is reachable.
+# 'wasm-unsafe-eval' lets Pyodide compile its WebAssembly, and nothing else.
+# media-src blob: is the player, which plays picked files by blob URL. The
+# login itself is a top-level navigation to Spotify, which CSP does not govern.
 #
 # The two Cross-Origin headers make the page cross-origin isolated, which is
 # what makes SharedArrayBuffer available, and that is how Cancel interrupts
@@ -14,7 +18,7 @@
 # file comes from this origin. On every file, worker script included: Chromium
 # isolates a dedicated worker by its own response's headers.
 /*
-  Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self' https://accounts.spotify.com https://api.spotify.com; style-src 'self'; img-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
   X-Content-Type-Options: nosniff

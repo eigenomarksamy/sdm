@@ -5,8 +5,8 @@ files only. Python runs in the visitor's browser through Pyodide, in a Web
 Worker (`frontend/src/browser/worker.ts`), and this module is that worker's
 Python half: the forms, the runs and the reports, behind one entry point,
 `call`. The visitor picks a folder, the worker mounts its files read-only, and
-nothing leaves the tab — the page's Content-Security-Policy forbids connecting
-anywhere but its own origin.
+they never leave the tab — the page's Content-Security-Policy forbids connecting
+anywhere but its own origin and, to read a playlist, Spotify's two hosts.
 
 **Not a feature, and imports none (rule 1)** — it drives commands the way
 `sdm.web` does: the argparse tree via `web/schema.py`, the reports via
@@ -28,36 +28,51 @@ processes, and each reason is answered another way here:
 **What runs here.** `ONLINE_COMMANDS`, and the reason each other command does
 not is a missing piece of the machine, not of the browser build: `duplicates`
 and `rekordbox` fingerprint through the `fpcalc` binary, `quality` through
-ffmpeg, `playlist-export` and a playlist *link* through a Spotify login whose
-redirect needs a local server. Their code is not removed from the wheel, only
-left off the forms; `prepare` refuses them by name.
+ffmpeg. Their code is not removed from the wheel, only left off the forms;
+`prepare` refuses them by name.
+
+**Spotify** (`playlist-export`, and `playlist-diff` given a link) logs in from
+the page, not from here. The CLI's login waits on a loopback server for
+Spotify's redirect, and a tab cannot listen on a port, so the page sends the
+whole tab to Spotify and back (`frontend/src/browser/spotify.ts`) and hands
+each run its token. `core.spotify`'s two hooks do the rest: `supplied_token`
+answers `login` for the run (`_spotify_login`), and `transport` sends requests
+through XMLHttpRequest (`_xhr`), since Pyodide's urllib has no sockets either.
+`fetch_playlist`, its errors and its messages are the CLI's own.
 """
 from __future__ import annotations
 
+import contextlib
+import email.message
+import http.client
 import importlib.util
+import io
 import json
 import os
 import signal
 import sys
 import traceback
 import types
-from typing import Any, Callable, Optional
+import urllib.error
+import urllib.request
+from typing import Any, Callable, Iterator, Optional
 
 from sdm.web import reports, schema
 
 #: The commands offered in the browser. See the module docstring for the rest.
-ONLINE_COMMANDS = ("catalog", "analyze", "playlist-diff")
+ONLINE_COMMANDS = ("catalog", "analyze", "playlist-diff", "playlist-export")
 
 #: Fields that mean nothing in a tab. Output locations: every report goes to
-#: `OUT_ROOT`, the only place the page lists. A Spotify client ID and the login
-#: browser: a link is refused anyway (see `_check_paths`).
+#: `OUT_ROOT`, the only place the page lists. The Spotify client ID and the
+#: login browser: the page logs in itself, from one box above both playlist
+#: commands' forms, and hands the run its login (see `run`).
 HIDDEN_FIELDS = frozenset({"output_dir", "output_csv", "client_id", "no_browser"})
 
-#: playlist-diff's positional takes a link or a CSV on the command line; here
-#: only the CSV, so its help says so instead of offering both.
-PLAYLIST_HELP = ("A CSV export of a playlist (Exportify, TuneMyMusic and similar "
-                 "tools). A Spotify link needs sdm on your own machine: its "
-                 "login cannot run in a browser tab.")
+#: playlist-diff's positional: the page gives the box a CSV picker, and a link
+#: can be pasted into the same box.
+PLAYLIST_HELP = ("A Spotify playlist link - log in to Spotify above first - or "
+                 "a CSV export of any playlist (Exportify, TuneMyMusic and "
+                 "similar tools), which needs no login.")
 
 OUT_ROOT = "/out"
 TMP_ROOT = "/tmp"
@@ -103,11 +118,12 @@ def boot() -> dict:
     """Ready the interpreter: shim pyrekordbox, set the roots, import the CLI."""
     _shim_pyrekordbox()
     from sdm import __version__, cli  # noqa: F401 - imports every add_parser
-    from sdm.core import paths
+    from sdm.core import paths, spotify
     from sdm.core.anlz import USBANLZ_SUBDIR
     from sdm.core.track import AUDIO_EXTS
 
     paths.configure(OUT_ROOT, TMP_ROOT)
+    spotify.transport = _xhr
     for root in (OUT_ROOT, TMP_ROOT, MUSIC_ROOT, PLAYLIST_ROOT):
         os.makedirs(root, exist_ok=True)
     signal.signal(signal.SIGINT, _on_cancel)
@@ -125,6 +141,8 @@ def boot() -> dict:
         "commands": commands(),
         # Named on the page, so it can say what needs sdm on a real machine.
         "offline": [c["name"] for c in schema.commands() if c["name"] not in ONLINE_COMMANDS],
+        # What the page's login asks Spotify for: the CLI's read-only scopes, not a copy.
+        "spotify_scopes": spotify.SCOPES,
     }
 
 
@@ -139,14 +157,19 @@ def commands() -> list[dict]:
             if field["dest"] in HIDDEN_FIELDS:
                 continue
             if field["dest"] == "playlist":
-                field = {**field, "help": PLAYLIST_HELP}
+                # schema gives every playlist box a CSV picker; only playlist-diff reads a CSV.
+                field = ({**field, "help": PLAYLIST_HELP} if spec["name"] == "playlist-diff"
+                         else {**field, "path": None, "accept": []})
             fields.append(field)
         online.append({**spec, "fields": fields})
     return online
 
 
-def prepare(command: str, values: Any) -> dict:
-    """Validate a form for `command` and return the argv to run, as `sdm web` would."""
+def prepare(command: str, values: Any, spotify: bool = False) -> dict:
+    """Validate a form for `command` and return the argv to run, as `sdm web` would.
+
+    `spotify` is whether the page has a Spotify login to hand the run.
+    """
     if command not in ONLINE_COMMANDS:
         raise schema.InvalidRequest(
             f"sdm {command} does not run in a browser - use sdm on your own machine")
@@ -155,13 +178,17 @@ def prepare(command: str, values: Any) -> dict:
     spec = next(c for c in commands() if c["name"] == command)
     visible = {field["dest"]: field for field in spec["fields"]}
     values = {dest: value for dest, value in values.items() if dest in visible}
-    _check_paths(visible, values)
+    _check_paths(visible, values, spotify)
     invocation = schema.build(command, values)
     return {"argv": invocation.argv, "display": invocation.display}
 
 
-def run(argv: list[str]) -> int:
-    """Run one command in this interpreter; its exit code. Output goes to the worker."""
+def run(argv: list[str], spotify: Optional[dict] = None) -> int:
+    """Run one command in this interpreter; its exit code. Output goes to the worker.
+
+    `spotify` is the page's login, `{"client_id", "token"}`, given to every run
+    of a command that can read a playlist; see `_spotify_login`.
+    """
     from sdm import cli
     from sdm.web.child import CANCELLED_EXIT
 
@@ -170,7 +197,8 @@ def run(argv: list[str]) -> int:
     try:
         try:
             _running = True
-            code = cli.main(list(argv))
+            with _spotify_login(spotify):
+                code = cli.main(list(argv))
         finally:
             _running = False
     except KeyboardInterrupt:  # the page's Cancel; see `_on_cancel`
@@ -233,28 +261,96 @@ _API: dict[str, Callable[..., Any]] = {
 # --- internals ---------------------------------------------------------------
 
 
-def _check_paths(fields: dict[str, dict], values: dict) -> None:
+def _check_paths(fields: dict[str, dict], values: dict, logged_in: bool) -> None:
     """Refuse a path the tab cannot read, with a message that says what to do.
 
     A picked folder is mounted until the tab reloads, but the form remembers
     its path across reloads — so a stale path is the common case, not an edge.
+    A playlist link is refused here without a login, rather than by the
+    command, whose message would say to set an environment variable.
     """
+    from sdm.core.playlist import parse_playlist_ref
+
     for dest, field in fields.items():
         value = values.get(dest)
         if not isinstance(value, str) or not value.strip():
             continue
         value = value.strip()
         if dest == "playlist":
-            if not os.path.isfile(value):
+            reads_csv = field["path"] == "file"
+            if reads_csv and os.path.isfile(value):
+                continue
+            if parse_playlist_ref(value) is None:
                 raise schema.InvalidRequest(
-                    f"{field['label']}: choose a CSV export with the button. "
-                    + ("A Spotify link needs sdm on your own machine."
-                       if "spotify" in value.lower() else
-                       "A file picked before a reload has to be picked again."))
+                    f"{field['label']}: "
+                    + ("choose a CSV export with the button, or paste a Spotify "
+                       "playlist link. A file picked before a reload has to be "
+                       "picked again." if reads_csv else
+                       "paste a Spotify playlist link (open.spotify.com/playlist/...)."))
+            if not logged_in:
+                raise schema.InvalidRequest(
+                    f"{field['label']}: a playlist link is read through your "
+                    "Spotify account - log in to Spotify above first"
+                    + (", or choose a CSV export, which needs no login." if reads_csv else "."))
         elif field["path"] == "dir" and not os.path.isdir(value):
             raise schema.InvalidRequest(
                 f"{field['label']}: {value} is not a folder picked in this tab. "
                 "Choose it again - picks do not survive a reload.")
+
+
+@contextlib.contextmanager
+def _spotify_login(login: Optional[dict]) -> Iterator[None]:
+    """The page's Spotify login, for one run.
+
+    `core.spotify.login` answers with the page's token instead of starting its
+    loopback server, and the client ID goes where the commands look for one,
+    the environment, since the form has no box for it. Both are taken back
+    after, so no later run can use a login it was not handed.
+    """
+    from sdm.core import spotify
+
+    if not login:
+        yield
+        return
+    before = os.environ.get(spotify.CLIENT_ID_ENV)
+    os.environ[spotify.CLIENT_ID_ENV] = login["client_id"]
+    spotify.supplied_token = login["token"]
+    try:
+        yield
+    finally:
+        spotify.supplied_token = None
+        if before is None:
+            os.environ.pop(spotify.CLIENT_ID_ENV, None)
+        else:
+            os.environ[spotify.CLIENT_ID_ENV] = before
+
+
+def _xhr(request: urllib.request.Request) -> bytes:
+    """`core.spotify.transport` in a tab: a synchronous XMLHttpRequest.
+
+    Pyodide's urllib has no sockets to send through. A synchronous request is
+    allowed in a worker and blocks only the worker, as `urlopen` blocks a
+    process. It fails the way `urlopen` does, which is what `core.spotify`
+    handles: `HTTPError` for an error status, `URLError` for no answer at all,
+    which is also what a request the page's CSP blocks looks like.
+    """
+    from pyodide.http import pyxhr
+
+    send = pyxhr.post if request.get_method() == "POST" else pyxhr.get
+    body = request.data.decode("utf-8") if request.data else None
+    try:
+        response = send(request.full_url, headers=dict(request.header_items()), data=body)
+    except pyxhr.XHRError as exc:
+        raise urllib.error.URLError(str(exc)) from None
+    if response.status_code >= 400:
+        headers = email.message.Message()
+        for name, value in response.headers.items():
+            headers[name] = value
+        raise urllib.error.HTTPError(
+            request.full_url, response.status_code,
+            http.client.responses.get(response.status_code, ""), headers,
+            io.BytesIO(response.content))
+    return response.content
 
 
 def _on_cancel(signum: int, frame: Any) -> None:

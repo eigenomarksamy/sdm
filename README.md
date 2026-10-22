@@ -18,8 +18,8 @@ features that share a small common core:
  sdm download         —  deprecated, not registered (see below)
 
  sdm web              —  all of the above in a browser, on this machine only
- sdm.eigenomar.com    —  catalog, analyze and playlist-diff in any browser,
-                         with nothing uploaded (the browser build, below)
+ sdm.eigenomar.com    —  catalog, analyze and both playlist commands in any
+                         browser, with no file uploaded (the browser build, below)
 ```
 
 Each feature is self-contained: it may use `sdm.core`, never a sibling. Heavy
@@ -110,7 +110,7 @@ parts.
 | | Matching | Title and artist, version-aware: "Extended Mix" and "Radio Edit" are the same track, a named remix is not | The folder's tags, plus "Artist - Title" read out of title tags and filenames | done |
 | | "Maybe" | A different version owned, or a file with no artist tag to confirm — listed with the file, never counted as owned | — | done |
 | | Report | `missing_<playlist>.csv` (the answer) and `matched_<playlist>.csv` (which file each owned track matched) | `--output-dir` | done |
-| | Saved login | Skipping the browser on later runs | — | planned — needs a persistent per-user location, not yet settled. Meanwhile, `playlist-export` once and diff the CSV |
+| | Saved login | Skipping the browser on later runs | — | done in the browser build, which keeps its login in the browser. Planned for the CLI and `sdm web`: needs a persistent per-user location, not yet settled. Meanwhile, `playlist-export` once and diff the CSV |
 | `playlist-export` | *(the command)* | Writes a Spotify playlist to CSV with Exportify's column names. **Read-only** against Spotify | A playlist link, URI or ID; `--output-csv` | partial — **only playlists you own or collaborate on**, the same API limit as `playlist-diff` |
 | | Columns | URI, title, artists, album, album artists, release date, disc/track number, duration, explicit, ISRC, added by/at, playlist name | — | done |
 | | Excel-safe | UTF-8 with a byte-order mark, so accented names open correctly | — | done |
@@ -121,6 +121,7 @@ parts.
 | | Duplicate groups | Copies side by side, differences highlighted, A/B playback that keeps the position between copies | Any `duplicates.json` (`duplicates` or `rekordbox`) | done |
 | | Playlist diff | Missing / maybe / owned tabs, local file playback, Spotify links, copy-as-list | `missing_`/`matched_<playlist>.csv` | done |
 | | Audio quality | Each file's measurements with its claims beside them, disagreements highlighted; filter by issue; a full measured / file / Rekordbox comparison per track; playback | `quality_<folder>.csv` | done |
+| | Spotify setup guide | Creating the Spotify app and client ID step by step, with this front end's redirect URI to copy, sharing, troubleshooting, and what the login allows | — | done — also in the browser build |
 | | Report tables | Any CSV under `out/`, paged, filtered and sorted server-side; audio paths get a play button | — | done — files over 64 MB are paged only |
 | | Beat grid and phrase view | `analyze`'s phrases on a timeline, with playback | — | planned — opens as a table today |
 | | Access from other devices | — | — | n/a, deliberately — bound to 127.0.0.1, see below |
@@ -613,11 +614,15 @@ with a third-party tool such as [Exportify](https://exportify.net/) and give
 
 ### One-time setup
 
+Both web front ends carry a step-by-step version of this, with screens named
+and troubleshooting: *Spotify setup* in the sidebar.
+
 1. Open the [Spotify developer dashboard](https://developer.spotify.com/dashboard)
    and create an app. **The account needs Spotify Premium** — another of
    Spotify's 2026 requirements for apps in development mode.
 2. Add the redirect URI **`http://127.0.0.1:8765/callback`**, character for
-   character (`localhost` is rejected by Spotify), and tick *Web API*.
+   character (`localhost` is rejected by Spotify), and tick *Web API*. For the
+   browser build, add **`https://sdm.eigenomar.com/`** too; one app serves both.
 3. Copy the app's **Client ID** and make it available to sdm:
 
    ```ps1
@@ -639,6 +644,17 @@ If port 8765 is taken, register a different loopback URI on the app and set
 The login asks only for read-only scopes (`playlist-read-private`,
 `playlist-read-collaborative`), so the token could not change a playlist even
 by mistake.
+
+### In the browser build
+
+The same app works at sdm.eigenomar.com, with its redirect URI added (above).
+Paste the client ID into the *Spotify login* box above the `playlist-diff` or
+`playlist-export` form and log in. The tab goes to Spotify and back, which
+reloads the page, so **log in before choosing a folder**: a reload forgets
+picked folders. The login is then kept in that browser, renewed in the
+background, until *Log out*. Each visitor uses a client ID of their own:
+Spotify allows a development-mode app five users, so one built into the site
+could serve only five people.
 
 ---
 
@@ -852,21 +868,23 @@ The same page as `sdm web`, with no server behind it. Python runs in the
 visitor's own browser through [Pyodide](https://pyodide.org), you pick a music
 folder or a Rekordbox USB, and the commands read it where it is.
 
-Three commands run there: **`catalog`** (both modes), **`analyze`**, and
-**`playlist-diff` with a CSV export**. The rest need something a browser tab
-does not have — `duplicates` and `rekordbox` fingerprint with the `fpcalc`
-program, `quality` uses ffmpeg, and `playlist-export` and Spotify links need a
-login that redirects to a local server — so they stay with `sdm` on your own
-machine.
+Four commands run there: **`catalog`** (both modes), **`analyze`**,
+**`playlist-diff`** (a CSV export, or a Spotify link once logged in) and
+**`playlist-export`**. The rest need a program a browser tab does not have —
+`duplicates` and `rekordbox` fingerprint with `fpcalc`, `quality` uses ffmpeg —
+so they stay with `sdm` on your own machine. Spotify links need a login with a
+client ID of your own; see [Spotify access](#in-the-browser-build).
 
-### Nothing leaves the browser
+### Your files never leave the browser
 
 The page's Content-Security-Policy (`frontend/src/browser/_headers`) lets it
-connect to its own site and nowhere else, so the browser itself blocks any
-attempt to send a file elsewhere — and the site serves static files, with
-nothing to receive one. Everything the page loads, Python included, comes from
-that site; nothing is fetched from a CDN or PyPI. Reports are kept in the tab
-and are gone on reload; save one with *Open raw*.
+connect to its own site and to Spotify's two hosts, and nowhere else, so the
+browser itself blocks any attempt to send a file anywhere — and the site serves
+static files, with nothing to receive one. Spotify is reached only to read a
+playlist you logged in for, with read-only scopes, straight from your browser.
+Everything the page loads, Python included, comes from the site itself; nothing
+is fetched from a CDN or PyPI. Reports are kept in the tab and are gone on
+reload; save one with *Open raw*.
 
 ### Picking a folder
 

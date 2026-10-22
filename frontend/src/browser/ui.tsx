@@ -1,17 +1,127 @@
-// What only the browser build shows: Python starting, and a folder being picked.
-// Shared components render these when `browser` (src/api.ts) is set.
+// What only the browser build shows: Python starting, a folder being picked,
+// and the Spotify login. Shared components render these when `browser`
+// (src/api.ts) is set.
 import { useEffect, useState, type ReactNode } from "react";
-import type { BootState, BrowserHooks, PickProgress } from "../api";
+import type { BootState, BrowserHooks, PickProgress, SpotifyState } from "../api";
 import { bytes } from "../format";
+import { href } from "../router";
 
 /** The promise the page makes, and why it can keep it. Shown before anything is picked. */
 export function PrivacyNote() {
   return (
     <p className="muted">
-      Everything runs in this tab. Your files are read where they are and nothing leaves the browser: the page is only
-      allowed to connect to this site, which serves static files and has nothing to receive them with. Reports live in
-      this tab and are gone when you reload or close it.
+      Everything runs in this tab. Your files are read where they are and never leave the browser: the page is only
+      allowed to connect to this site, which serves static files and has nothing to receive them with, and to Spotify,
+      to read a playlist you log in for. Reports live in this tab and are gone when you reload or close it.
     </p>
+  );
+}
+
+/** What a Spotify client ID looks like. Checked softly, so a typo shows before the trip to Spotify. */
+const CLIENT_ID = /^[0-9a-f]{32}$/i;
+
+/**
+ * The Spotify login, above the form of a command that reads a playlist
+ * (browser/spotify.ts). The client ID is the visitor's own: Spotify allows a
+ * development-mode app five users and grants more only to businesses, so an
+ * app built into the site would serve five people. The guide says how.
+ */
+export function SpotifyLogin({ browser }: { browser: BrowserHooks }) {
+  const [state, setState] = useState<SpotifyState | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => browser.spotify.subscribe(setState), [browser]);
+  if (!state) return null;
+
+  const guide = (section: string, text: string) => <a href={href("/spotify", { section })}>{text}</a>;
+  // Spotify refuses localhost as a redirect address; the IP literal is the same page.
+  const onLocalhost = window.location.hostname === "localhost";
+  const typo = state.clientId !== "" && !CLIENT_ID.test(state.clientId);
+  const lost = browser.spotify.wouldForget();
+  const shown = error ?? state.error;
+
+  const login = () => {
+    setError(null);
+    setLeaving(true);
+    browser.spotify.login().catch((e: unknown) => {
+      setLeaving(false);
+      setError(e instanceof Error ? e.message : String(e));
+    });
+  };
+
+  return (
+    <section className="form spotify-login" aria-label="Spotify login">
+      <div className="field">
+        <label htmlFor="spotify-client-id">
+          <strong>Spotify login</strong> <span className="required">for a playlist link</span>
+        </label>
+        {state.loggedIn ? (
+          <>
+            <div className="input-row">
+              <span className="spotify-who">
+                Logged in{state.user && <> as <strong>{state.user}</strong></>}.
+              </span>
+              <button type="button" className="ghost" onClick={browser.spotify.logout}>
+                Log out
+              </button>
+            </div>
+            <p className="help">
+              Kept in this browser until you log out. Read-only: sdm can read your playlists, not change them, and only
+              playlists you own or collaborate on — {guide("playlists", "Spotify's rule")}.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="input-row">
+              <input
+                id="spotify-client-id"
+                placeholder="Client ID of your Spotify app"
+                value={state.clientId}
+                spellCheck={false}
+                autoComplete="off"
+                disabled={state.finishing}
+                onChange={(e) => browser.spotify.setClientId(e.target.value)}
+              />
+              <button
+                type="button"
+                className="primary"
+                disabled={!state.clientId || state.finishing || leaving || onLocalhost}
+                onClick={login}
+              >
+                {state.finishing ? "Finishing the login…" : leaving ? "Opening Spotify…" : "Log in to Spotify"}
+              </button>
+            </div>
+            <p className="help">
+              A playlist link is read through your Spotify account, with the client ID of a Spotify app of your own:
+              free, about five minutes to set up once, and it needs Premium. {guide("create", "How to create one")}.
+            </p>
+            {typo && (
+              <p className="help warn">
+                A client ID is 32 characters, digits and the letters a–f: the one on your app&apos;s Settings page. Not
+                the client secret.
+              </p>
+            )}
+            {onLocalhost ? (
+              <p className="help warn">
+                Spotify refuses <code>localhost</code> as an address to come back to. Open this page at{" "}
+                <code>{window.location.href.replace("//localhost", "//127.0.0.1")}</code> to log in.
+              </p>
+            ) : (
+              <p className={lost ? "help warn" : "help"}>
+                {lost
+                  ? `Logging in leaves this page for Spotify and reloads it on the way back, which forgets ${lost} in this tab. Log in first, then choose folders.`
+                  : "Logging in leaves this page for Spotify and comes back. Do it before choosing a folder: the page reloads, and a reload forgets picked folders."}
+              </p>
+            )}
+          </>
+        )}
+        {shown && (
+          <p className="help error-text">
+            {shown} {guide("troubleshooting", "What to check")}
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 

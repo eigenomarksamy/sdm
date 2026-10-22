@@ -13,7 +13,7 @@ import type { PyodideAPI } from "pyodide";
 import type { JobOutput } from "../api";
 import { keepForMount, mountName, ntfsCompare } from "./files";
 import { CANCEL_JOB, SIGNAL } from "./protocol";
-import type { BootInfo, FromWorker, Manifest, MountedFolder, OutFile, RunResult, Staged, ToWorker } from "./protocol";
+import type { BootInfo, FromWorker, Manifest, MountedFolder, OutFile, RunLogin, RunResult, Staged, ToWorker } from "./protocol";
 
 /**
  * Bytes per cached block when a picked file is read, and blocks kept per open
@@ -118,7 +118,7 @@ async function dispatch(message: ToWorker): Promise<[unknown, Transferable[]]> {
     case "call":
       return [call(message.name, message.args), []];
     case "run": {
-      const result = run(message.job, message.command, message.argv);
+      const result = run(message.job, message.command, message.argv, message.spotify);
       return [result, result.changed.map((f) => f.data)];
     }
     case "stage":
@@ -229,7 +229,7 @@ function line(stream: "out" | "err", text: string): void {
  * its own earlier reports, so none can tell. A run that fails rather than being
  * cancelled keeps what it wrote, as a failed run on disk would.
  */
-function run(id: string, command: string, argv: string[]): RunResult & { io: typeof io } {
+function run(id: string, command: string, argv: string[], spotify: RunLogin | null): RunResult & { io: typeof io } {
   // A cancel that came after the last run ended may still be in the buffer, and
   // is not for this run. Cleared before CANCEL_JOB is read, which the page writes first.
   if (control) Atomics.store(control, SIGNAL, 0);
@@ -247,7 +247,7 @@ function run(id: string, command: string, argv: string[]): RunResult & { io: typ
     Object.assign(io, { reads: 0, bytes: 0, ms: 0 });
     let exitCode: number;
     try {
-      exitCode = call<number>("run", { argv });
+      exitCode = call<number>("run", { argv, spotify });
     } finally {
       job = null;
     }

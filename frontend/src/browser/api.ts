@@ -7,6 +7,7 @@
 // page exactly as from the server), a copy of every report (a cancel can end the
 // worker, and the report list must open while a run blocks it), and the folders
 // the visitor picked (to mount again after a restart, and to play audio from).
+// The Spotify login is spotify.ts's; each run of a playlist command is handed it.
 import { ApiError } from "../api";
 import type {
   BootState,
@@ -26,6 +27,7 @@ import type {
 import { keepForMount, mountName } from "./files";
 import { CANCEL_JOB, SIGINT, SIGNAL } from "./protocol";
 import type { BootInfo, FromWorker, MountedFolder, RunResult, Staged, ToWorker } from "./protocol";
+import { spotify } from "./spotify";
 
 export { ApiError };
 
@@ -358,7 +360,15 @@ async function remountAndRestore(next: Python): Promise<BootInfo> {
 export const api = {
   session: async (): Promise<Session> => {
     const booted = await python.ready;
-    return { version: booted.version, out_root: booted.out_root, tmp_root: "/tmp", cwd: "/", sep: "/", spotify_client_id: false };
+    return {
+      version: booted.version,
+      out_root: booted.out_root,
+      tmp_root: "/tmp",
+      cwd: "/",
+      sep: "/",
+      spotify_client_id: false,
+      spotify_redirect_uri: spotify.redirectUri,
+    };
   },
   commands: async (): Promise<Command[]> => (await python.ready).commands,
   jobs: async (): Promise<JobSummary[]> => [...jobs].reverse().map(summary),
@@ -374,7 +384,16 @@ export const api = {
     }
     starting = true;
     try {
-      const { argv, display } = await call<{ argv: string[]; display: string }>("prepare", { command, values });
+      // A command that can read a playlist gets the Spotify login, if there is
+      // one, whatever its form holds: Python decides whether the run needs it.
+      const { commands } = await python.ready;
+      const readsPlaylist = commands.some((c) => c.name === command && c.fields.some((f) => f.dest === "playlist"));
+      const login = readsPlaylist ? await spotify.forRun() : null;
+      const { argv, display } = await call<{ argv: string[]; display: string }>("prepare", {
+        command,
+        values,
+        spotify: login !== null,
+      });
       const job: Job = {
         id: String(jobs.length + 1),
         command,
@@ -389,7 +408,13 @@ export const api = {
         outputs: [],
       };
       jobs.push(job);
-      python.send<RunResult & { io: { reads: number; bytes: number; ms: number } }>({ type: "run", job: job.id, command, argv }).then(
+      python.send<RunResult & { io: { reads: number; bytes: number; ms: number } }>({
+        type: "run",
+        job: job.id,
+        command,
+        argv,
+        spotify: login,
+      }).then(
         (result) => {
           if (result.cancelled) {
             appendLine(job.id, ["err", "Nothing this run wrote was kept; earlier reports are as they were."]);
@@ -520,5 +545,23 @@ export const browser: BrowserHooks = {
     if (playing) URL.revokeObjectURL(playing);
     playing = URL.createObjectURL(file);
     return playing;
+  },
+
+  spotify: {
+    subscribe: spotify.subscribe,
+    setClientId: spotify.setClientId,
+    async login() {
+      const { spotify_scopes } = await python.ready;
+      await spotify.login(spotify_scopes);
+    },
+    logout: spotify.logout,
+    wouldForget() {
+      const count = (n: number, what: string) => `${n} ${what}${n === 1 ? "" : "s"}`;
+      const lost: string[] = [];
+      if (jobs.some((j) => j.status === "running")) lost.push("the running command");
+      if (mounts.size) lost.push(count(mounts.size, "picked folder"));
+      if (reports.size) lost.push(count(reports.size, "report"));
+      return lost.length ? lost.join(", ").replace(/, ([^,]*)$/, " and $1") : null;
+    },
   },
 };

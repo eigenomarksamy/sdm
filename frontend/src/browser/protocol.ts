@@ -33,6 +33,14 @@ export interface BootInfo {
   mount: MountRules;
   commands: Command[];
   offline: string[];
+  /** What the page's Spotify login asks for: core/spotify.py's read-only scopes. */
+  spotify_scopes: string;
+}
+
+/** The page's Spotify login, handed to a run of a playlist command (`sdm.browser.run`). */
+export interface RunLogin {
+  client_id: string;
+  token: string;
 }
 
 export interface MountedFolder {
@@ -76,7 +84,7 @@ export type Staged = { rel: string; file: File };
 export type ToWorker =
   | { type: "init"; id: number; base: string; blockSize: number | null; control: Int32Array | null }
   | { type: "call"; id: number; name: string; args: Record<string, unknown> }
-  | { type: "run"; id: number; job: string; command: string; argv: string[] }
+  | { type: "run"; id: number; job: string; command: string; argv: string[]; spotify: RunLogin | null }
   | { type: "stage"; id: number; files: Staged[] }
   | { type: "mount"; id: number; name: string; handle?: FileSystemDirectoryHandle }
   | { type: "csv"; id: number; name: string; file: File }

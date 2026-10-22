@@ -1,5 +1,6 @@
 import { useEffect, useState, type SubmitEvent } from "react";
-import { api, ApiError, type Command, type FormValues, type JobSummary, type ReportFile, type Session } from "../api";
+import { api, ApiError, browser, type Command, type FormValues, type JobSummary, type ReportFile, type Session } from "../api";
+import { SpotifyLogin } from "../browser/ui";
 import { ErrorBox, FieldInput, StatusBadge } from "../components";
 import { ago, store } from "../format";
 import { href, navigate } from "../router";
@@ -67,6 +68,9 @@ export function CommandPage({
         )}
       </header>
 
+      {/* Outside the form: Enter in its box must not start a run. Here, sdm web's commands log in themselves. */}
+      {browser && command.fields.some((f) => f.dest === "playlist") && <SpotifyLogin browser={browser} />}
+
       <form className="form" onSubmit={submit}>
         {fields.map((field) => (
           <div key={field.dest}>
@@ -75,10 +79,15 @@ export function CommandPage({
               value={values[field.dest] ?? null}
               onChange={(v) => setValues((prev) => ({ ...prev, [field.dest]: v }))}
             />
-            {field.dest === "client_id" && !session.spotify_client_id && (
-              <p className="help warn">
-                <code>SDM_SPOTIFY_CLIENT_ID</code> is not set where <code>sdm web</code> was started. A playlist link
-                needs one here or in the environment; a CSV export needs none.
+            {field.dest === "client_id" && (
+              <p className={session.spotify_client_id ? "help" : "help warn"}>
+                {!session.spotify_client_id && (
+                  <>
+                    <code>SDM_SPOTIFY_CLIENT_ID</code> is not set where <code>sdm web</code> was started. A playlist
+                    link needs one here or in the environment; a CSV export needs none.{" "}
+                  </>
+                )}
+                <a href={href("/spotify")}>How to get a client ID</a>
               </p>
             )}
           </div>

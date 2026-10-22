@@ -21,6 +21,14 @@ CLAUDE.md), and `out/` and `tmp/` are each wrong for it.
 
 The scopes are read-only, so the token cannot modify a playlist even by mistake.
 
+**Two hooks, for the browser build** (`supplied_token`, `transport`). It runs
+the commands in a browser tab, where neither half of the above works: there is
+no socket to listen for the redirect on, and none for urllib to send through.
+Its page logs in itself and supplies the token, and its worker sends requests
+through XMLHttpRequest (`sdm.browser`). Everything between, from
+`fetch_playlist` to the messages, stays this module's, so the commands cannot
+tell which front end they run under.
+
 Stdlib only (`urllib`, `http.server`): one GET per 50 tracks does not justify a
 dependency.
 """
@@ -83,6 +91,21 @@ class _ApiError(SpotifyError):
 def resolve_client_id(explicit: Optional[str]) -> Optional[str]:
     """The explicitly passed client ID if any, else `$SDM_SPOTIFY_CLIENT_ID`, else None."""
     return explicit or os.environ.get(CLIENT_ID_ENV) or None
+
+
+def _urlopen(request: urllib.request.Request) -> bytes:
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read()
+
+
+#: An access token a front end obtained itself. When set, `login` returns it
+#: instead of logging in. Set and cleared around each run by `sdm.browser`.
+supplied_token: Optional[str] = None
+
+#: Sends a request and returns the response body, failing as `urlopen` does:
+#: `HTTPError` for an error status, `URLError` for no answer. `sdm.browser`
+#: replaces it; nothing else should.
+transport: Callable[[urllib.request.Request], bytes] = _urlopen
 
 
 # --- login ---------------------------------------------------------------
@@ -160,7 +183,12 @@ def login(
     timeout: float = LOGIN_TIMEOUT,
     log: Callable[[str], None] = print,
 ) -> str:
-    """Run the PKCE login in the user's browser and return an access token."""
+    """Run the PKCE login in the user's browser and return an access token.
+
+    With `supplied_token` set, return that: the front end has logged in already.
+    """
+    if supplied_token is not None:
+        return supplied_token
     redirect_uri = redirect_uri or os.environ.get(REDIRECT_URI_ENV) or DEFAULT_REDIRECT_URI
     parsed = urllib.parse.urlparse(redirect_uri)
     if parsed.scheme != "http" or parsed.hostname not in _LOOPBACK_HOSTS:
@@ -245,8 +273,7 @@ def _request(request: urllib.request.Request) -> dict:
     """Send `request` and decode the JSON reply, waiting out rate limits."""
     for attempt in range(MAX_ATTEMPTS):
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return json.loads(response.read().decode("utf-8"))
+            return json.loads(transport(request).decode("utf-8"))
         except urllib.error.HTTPError as exc:
             if exc.code == 429 and attempt < MAX_ATTEMPTS - 1:
                 try:

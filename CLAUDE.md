@@ -16,8 +16,9 @@ sdm catalog  sdm duplicates  sdm rekordbox  sdm analyze  sdm quality
 
 sdm download — deprecated, not registered (features/spotify)
 sdm web      — a front end over all of the above, beside cli.py (sdm.web)
-browser      — a third front end: catalog, analyze, playlist-diff (CSV) running
-               in a browser tab via Pyodide, at sdm.eigenomar.com (sdm.browser)
+browser      — a third front end: catalog, analyze, playlist-diff, playlist-export
+               running in a browser tab via Pyodide, at sdm.eigenomar.com
+               (sdm.browser)
 ```
 
 **`sdm download` is switched off.** `spotify` is not in `FEATURES` in `cli.py`,
@@ -47,7 +48,7 @@ parked, not condemned.
 | `src/sdm/web/static/` | The built page. Gitignored, written by `npm run build` in `frontend/` |
 | `frontend/` | The page's source: React 19 + TypeScript 7 + Vite 8. `package-lock.json` is committed, `node_modules/` is not |
 | `src/sdm/browser.py` | The browser build's Python half. **A front end like `cli.py` and `sdm.web`, not a feature**; imports no feature |
-| `frontend/src/browser/` | The browser build's page side: the API swapped in for `src/api.ts`, the Pyodide worker, `_headers` |
+| `frontend/src/browser/` | The browser build's page side: the API swapped in for `src/api.ts`, the Pyodide worker, the Spotify login, `_headers` |
 | `build_browser.py` | Builds the browser version into `dist/` (gitignored): page, self-hosted Pyodide, wheels |
 | `wrangler.jsonc` | Cloudflare Workers config serving `dist/` at sdm.eigenomar.com. `.wrangler/` is its gitignored state |
 | `docs/rekordbox.md` | Detailed Rekordbox reference |
@@ -287,6 +288,14 @@ identical inputs.
   without a port, a free one is picked). Spotify rejects `localhost` by name.
   **The token is deliberately not saved** — that needs the persistent per-user
   location still unsettled for `dig` below; settle it there, then reuse it here.
+  (The browser build's page keeps its own login in localStorage; that is the
+  page's, not this module's.)
+  **Two hooks exist for the browser build and nothing else**: `supplied_token`
+  (set, `login` returns it instead of logging in) and `transport` (how
+  `_request` sends; `urlopen` by default, failing as `urlopen` does). A tab has
+  no socket for the loopback redirect or for urllib, so `sdm.browser` sets both
+  and everything between — `fetch_playlist`, the 403/404 handling, the messages
+  — stays this module's. Do not branch on "am I in a browser" here instead.
   Stdlib only; like `fpcalc_fetch.py`, a core module that touches the network.
 - `report.py` — all CSV/JSON/sidecar writers. `newline=""` here is what stops
   the `csv` module writing blank lines between rows on Windows. `write_csv`
@@ -747,7 +756,12 @@ needs no extra; Node is a build-time dependency of the page, never of the server
   claim highlighted by `compare.py`'s tolerances — the flags themselves always
   come from the report, never recomputed in the page — issue chips from the
   `issues` column, and a measured / file / Rekordbox table per track),
-  `TableView` for everything else. A play button appears only on a path that is
+  `TableView` for everything else. `pages/SpotifySetup.tsx` (`#/spotify`,
+  *Spotify setup* in the sidebar) is the step-by-step client ID guide for both
+  builds, linked from `--client-id`'s field; the redirect URI it shows comes
+  from the session (`spotify_redirect_uri`: `SDM_SPOTIFY_REDIRECT_URI` or
+  core's default), and `?section=` scrolls to a heading, since the router owns
+  the `#`. Its facts are Spotify's and move; it says when they were checked. A play button appears only on a path that is
   absolute on this machine, because analyze's `device_path` (`/Contents/…mp3`)
   is a USB path the server cannot open. `npm run dev` proxies `/api` and `/auth`
   to a running `sdm web` and rewrites `Origin`, or the POST check refuses it.
@@ -774,10 +788,11 @@ the previous report untouched.
 The third front end. Static files on Cloudflare Workers (`wrangler.jsonc`:
 assets only, no Worker script); Python runs in the visitor's tab through
 Pyodide 314.0.7 (Python 3.14) in a Web Worker. Online: `catalog` (both modes),
-`analyze`, `playlist-diff` with a CSV. Not: `duplicates`/`rekordbox` (fpcalc),
-`quality` (ffmpeg), `playlist-export` and playlist links (the Spotify login
-needs a loopback server). **`cli.py` and every feature are unchanged** —
-`sdm.browser.ONLINE_COMMANDS` and `HIDDEN_FIELDS` cut the forms down instead.
+`analyze`, `playlist-diff` (CSV or link), `playlist-export`. Not:
+`duplicates`/`rekordbox` (fpcalc), `quality` (ffmpeg). **`cli.py` and every
+feature are unchanged** — `sdm.browser.ONLINE_COMMANDS` and `HIDDEN_FIELDS`
+cut the forms down instead, and the Spotify login goes through
+`core.spotify`'s two hooks.
 
 - `frontend/src/api.ts` stays the page's only link to a backend.
   `vite build --mode browser` redirects every import of it to
@@ -869,11 +884,33 @@ What is load-bearing:
   Picks die with the tab but form values persist, so `prepare` checks the path
   and says to pick again.
 - **The CSP** (`src/browser/_headers`): `default-src 'none'`, and
-  `connect-src 'self'` is what makes "nothing leaves the browser" enforced
-  rather than claimed, in the page and the worker alike. `'wasm-unsafe-eval'`
-  for Pyodide, `media-src blob:` for playback. Everything is self-hosted for
-  this reason — do not add a CDN or any other origin. A test that byte-compares
-  reports needs a second tab with CSP bypassed: `fetch(blob:)` is connect-src.
+  `connect-src 'self' https://accounts.spotify.com https://api.spotify.com` is
+  what makes "your files never leave the browser" enforced rather than
+  claimed, in the page and the worker alike. The two Spotify hosts are the
+  playlist commands' and nothing else. `'wasm-unsafe-eval'` for Pyodide,
+  `media-src blob:` for playback. Everything is self-hosted for this reason —
+  do not add a CDN or any other origin. A test that byte-compares reports
+  needs a second tab with CSP bypassed: `fetch(blob:)` is connect-src.
+- **The Spotify login** (`src/browser/spotify.ts`). The tab itself goes to
+  Spotify's login and comes back to the site root with a code (PKCE, the
+  visitor's own client ID, scopes from `core.spotify.SCOPES` via boot),
+  traded for a token as the module loads; the query comes off at once so a
+  reload cannot resend it, and the hash route the login started from is
+  restored. A redirect rather than a popup because the page's COOP cuts a
+  popup's `opener`; the cost is a reload, which forgets picked folders and
+  reports — so the box says to log in first, and says what it would forget.
+  That cost is also why the login is **kept in localStorage** (unlike the
+  CLI's): once per browser, renewed with the refresh token 5 min before
+  expiry, until *Log out*. The pending verifier is there too, read back before
+  leaving. `/me` is called at login because a development-mode app lets anyone
+  log in and then answers 403 to accounts not on its user list; without it
+  that would surface at the first run. The client ID is each visitor's own
+  (5 users per app), with a 32-hex soft check. Each run of a command with a
+  `playlist` field is handed `{client_id, token}` (`browser/api.ts` → worker →
+  `sdm.browser.run`), which `_spotify_login` installs for that run only, and
+  `prepare` refuses a link without one — before the command would say to set
+  an environment variable. The worker reads the API with synchronous
+  XMLHttpRequest (`_xhr`, over `pyodide.http.pyxhr`) as `core.spotify.transport`.
 - **Self-hosted assets** (`build_browser.py`): only the four core files from the
   npm package `frontend/package.json` pins (keep `PYODIDE_VERSION` in step),
   numpy and packaging from jsDelivr checked against the lock's sha256, and the
@@ -903,6 +940,20 @@ in either picker, the prompts' exact wording, Firefox and Safari, a real
 Cloudflare deploy, and three cancel paths no test could time: the grace
 fallback (a command that ignores the interrupt), a cancel landing just as a
 run ends, and one sent while the run still waits behind another call.
+
+**Spotify, verified** in headless Edge with the CSP enforced against a fake
+Spotify: a local HTTPS server with a self-signed certificate, which Edge
+reaches through `--host-resolver-rules` and `--ignore-certificate-errors`.
+**Not puppeteer's request interception** — it stalls the worker's own fetches,
+so Python never boots. Checked: the authorize request (client, S256 challenge
+matching the verifier, root redirect, CLI scopes), the return to the starting
+route with the query gone, nothing resent on reload, a cancelled login, a
+`/me` 403, export and diff with a link (pagination, the page's token on every
+worker request, through real CORS preflights), the CLI's 403 message for someone
+else's playlist, renewal (old refresh token kept when none comes back), a
+revoked refresh token, log out, other origins still blocked, and the box and
+guide in light, dark and phone width. **Not verified:** a real Spotify login
+with a real client ID, from either web front end.
 
 ## Conventions
 
@@ -1064,8 +1115,9 @@ What is already decided, and what the existing structure forces:
   sources that have keys rather than failing — `core/spotify.py` now does this
   for one Spotify client ID, see `SDM_SPOTIFY_CLIENT_ID`); and it needs a
   *persistent* cache, which neither `out/` (reports) nor `tmp/` (deleted on
-  exit) is. The Spotify login token hit the same wall and stayed unsaved, so
-  this location now has two consumers. Spotify's February 2026
+  exit) is. The Spotify login token hit the same wall and stayed unsaved in
+  the CLI and `sdm web` (the browser build has localStorage, so it saves its
+  own), so this location now has two consumers. Spotify's February 2026
   changes also apply: search caps at 10 results per page, and track/artist
   `popularity` is gone for new apps — re-read the README source table before
   leaning on Spotify for scoring. Settle that third location before writing

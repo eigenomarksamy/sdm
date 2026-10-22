@@ -8,6 +8,7 @@ import { JobPage } from "./pages/JobPage";
 import { JobsPage } from "./pages/JobsPage";
 import { ReportPage } from "./pages/ReportPage";
 import { ReportsPage } from "./pages/ReportsPage";
+import { SpotifySetup } from "./pages/SpotifySetup";
 import { href, useRoute } from "./router";
 
 /** How often the sidebar refreshes the job list, which is what lights up a running job. */
@@ -85,6 +86,8 @@ export function App() {
   } else if (section === "report") {
     const path = route.query.get("path") ?? "";
     page = <ReportPage key={path + route.query.get("view")} path={path} forceTable={route.query.get("view") === "table"} />;
+  } else if (section === "spotify") {
+    page = <SpotifySetup session={session} section={route.query.get("section")} />;
   } else {
     page = <Home commands={commands} jobs={jobs} session={session} />;
   }
@@ -117,8 +120,12 @@ export function App() {
         <a href={href("/reports")} className={section === "reports" || section === "report" ? "active" : ""}>
           Reports
         </a>
+        <div className="nav-label">Help</div>
+        <a href={href("/spotify")} className={section === "spotify" ? "active" : ""}>
+          Spotify setup
+        </a>
         {browser ? (
-          <div className="sidebar-foot muted" title="Your files are read in this tab and nothing leaves the browser.">
+          <div className="sidebar-foot muted" title="Your files are read in this tab and never leave the browser.">
             In this tab only · nothing uploaded
           </div>
         ) : (

@@ -376,6 +376,9 @@ label.inline {
 .help.warn {
   color: var(--warn);
 }
+.help.error-text {
+  color: var(--bad);
+}
 .required {
   color: var(--muted);
   font-weight: 400;
@@ -905,6 +908,54 @@ button.play.active {
 .player audio {
   width: min(480px, 50vw);
   height: 36px;
+}
+
+/* The Spotify login above a playlist command's form (browser build). Wraps, so
+   the button drops below the box at phone width instead of pushing past it. */
+.spotify-login {
+  margin-bottom: 1rem;
+}
+.spotify-login .input-row {
+  flex-wrap: wrap;
+}
+.spotify-login .input-row > input {
+  min-width: 12rem;
+}
+.spotify-who {
+  flex: 1;
+  align-self: center;
+}
+
+/* The Spotify setup guide: prose, so a reading measure and room between steps. */
+.guide {
+  max-width: 75ch;
+}
+.guide li {
+  margin: 0.4rem 0;
+}
+.guide li > .help {
+  margin-top: 0.4rem;
+}
+.copy-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.4rem 0;
+}
+.copy-line code {
+  padding: 0.2rem 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+.faq dt {
+  font-weight: 600;
+  margin-top: 0.9rem;
+}
+.faq dd {
+  margin: 0.25rem 0 0;
 }
 
 @media (max-width: 760px) {

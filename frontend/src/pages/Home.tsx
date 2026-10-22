@@ -27,8 +27,8 @@ export function Home({ commands, jobs, session }: { commands: Command[]; jobs: J
                   <code>{name}</code>
                 </span>
               ))}
-              , and Spotify links in <code>playlist-diff</code> (a CSV export works). They need fpcalc, ffmpeg or a
-              Spotify login, so they run with sdm on your own machine.
+              . They need fpcalc or ffmpeg, so they run with sdm on your own machine. A Spotify playlist link needs a
+              login with a client ID of your own: <a href={href("/spotify")}>Spotify setup</a>.
             </p>
           </>
         ) : (

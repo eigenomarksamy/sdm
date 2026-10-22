@@ -103,4 +103,11 @@ export const store = {
       // Not remembered; nothing depends on it.
     }
   },
+  remove(key: string): void {
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      // Nothing was stored, then.
+    }
+  },
 };
