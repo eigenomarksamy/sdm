@@ -3,13 +3,16 @@
 // The page (browser/api.ts) answers the same calls `sdm web`'s server does, and
 // anything that needs Python comes here. Messages are handled strictly one at a
 // time — Pyodide is single-threaded, and a run blocks this worker until it ends.
-// Cancelling therefore cannot be a message: the page terminates the worker and
-// starts another, which is why every report is also carried back to the page.
+// Cancelling therefore cannot be a message: the page writes to memory shared
+// with this worker, which Python polls (protocol.ts), or, where it cannot,
+// terminates the worker and starts another. That is why every report is also
+// carried back to the page.
 //
 // Module, not classic: Pyodide 314 refuses classic workers outright.
 import type { PyodideAPI } from "pyodide";
 import type { JobOutput } from "../api";
 import { keepForMount, mountName, ntfsCompare } from "./files";
+import { CANCEL_JOB, SIGNAL } from "./protocol";
 import type { BootInfo, FromWorker, Manifest, MountedFolder, OutFile, RunResult, Staged, ToWorker } from "./protocol";
 
 /**
@@ -56,9 +59,13 @@ interface EmFs {
   readdir(path: string): string[];
   stat(path: string): Stat;
   isDir(mode: number): boolean;
+  analyzePath(path: string): { exists: boolean };
   readFile(path: string): Uint8Array;
   writeFile(path: string, data: Uint8Array): void;
   utime(path: string, atime: number, mtime: number): void;
+  rename(from: string, to: string): void;
+  unlink(path: string): void;
+  rmdir(path: string): void;
   filesystems: { WORKERFS: WorkerFs };
 }
 
@@ -71,6 +78,8 @@ let info: BootInfo;
 let python: (name: string, args: string) => string;
 let staged: Staged[] = [];
 const mounted = new Set<string>();
+/** The cancel channel (protocol.ts); null when the page is not cross-origin isolated. */
+let control: Int32Array | null = null;
 
 // The run in progress: where its output lines go, and the reports it announced.
 let job: string | null = null;
@@ -104,6 +113,7 @@ async function handle(message: ToWorker): Promise<void> {
 async function dispatch(message: ToWorker): Promise<[unknown, Transferable[]]> {
   switch (message.type) {
     case "init":
+      control = message.control;
       return [await boot(message.base, message.blockSize), []];
     case "call":
       return [call(message.name, message.args), []];
@@ -159,6 +169,8 @@ async function boot(base: string, blockSize: number | null): Promise<BootInfo> {
   python = py.pyimport("sdm.browser").call;
   info = call<BootInfo>("boot", {});
   patchWorkerFs(blockSize ?? BLOCK_SIZE);
+  // After boot, which installs the handler that keeps a cancel inside a run.
+  if (control) py.setInterruptBuffer(control);
   return info;
 }
 
@@ -209,49 +221,103 @@ function line(stream: "out" | "err", text: string): void {
 
 // --- runs -------------------------------------------------------------------------
 
+/**
+ * Run one command. A cancelled run leaves the output root exactly as it found
+ * it, half-written reports included: the run writes into an empty output root
+ * while the earlier reports wait beside it, and `putBack` restores them after,
+ * dropping or keeping what the run wrote. Renames, no copies. No command reads
+ * its own earlier reports, so none can tell. A run that fails rather than being
+ * cancelled keeps what it wrote, as a failed run on disk would.
+ */
 function run(id: string, command: string, argv: string[]): RunResult & { io: typeof io } {
-  const before = tree(info.out_root);
-  const started = Date.now() / 1000;
-  job = id;
-  wrote = [];
-  Object.assign(io, { reads: 0, bytes: 0, ms: 0 });
-  let exitCode: number;
-  try {
-    exitCode = call<number>("run", { argv });
-  } finally {
-    job = null;
-  }
-  const outputs = call<JobOutput[]>("outputs", { command, started, wrote });
+  // A cancel that came after the last run ended may still be in the buffer, and
+  // is not for this run. Cleared before CANCEL_JOB is read, which the page writes first.
+  if (control) Atomics.store(control, SIGNAL, 0);
+  if (cancelled(id)) return { exit_code: null, cancelled: true, outputs: [], changed: [], io: { ...io } };
 
-  // Everything under the output root that this run created or rewrote goes back
-  // to the page, which keeps it: reports must outlive a cancel, which ends this
-  // worker, and the page can list them while the next run blocks it.
-  const after = tree(info.out_root);
-  const changed: OutFile[] = [];
-  for (const [path, stamp] of after) {
-    if (before.get(path) !== stamp) {
-      const bytes = fs.readFile(path);
-      changed.push({ path, mtime: Number(stamp.split(":")[1]) / 1000, data: bytes.buffer as ArrayBuffer });
+  const root = info.out_root;
+  const earlier = `${root}.earlier`;
+  fs.rename(root, earlier);
+  fs.mkdirTree(root);
+  let keep = false;
+  try {
+    const started = Date.now() / 1000;
+    job = id;
+    wrote = [];
+    Object.assign(io, { reads: 0, bytes: 0, ms: 0 });
+    let exitCode: number;
+    try {
+      exitCode = call<number>("run", { argv });
+    } finally {
+      job = null;
     }
+    // Decided here, not by how Python ended: a cancel that arrives as the command
+    // finishes still cancels it, and the page waits for this answer to say which.
+    if (cancelled(id)) return { exit_code: exitCode, cancelled: true, outputs: [], changed: [], io: { ...io } };
+
+    // Before the earlier reports are back, so that only this run's are found.
+    const outputs = call<JobOutput[]>("outputs", { command, started, wrote });
+    // Everything the run wrote goes back to the page, which keeps it: reports must
+    // outlive a restart, and the page lists them while the next run blocks this worker.
+    const changed: OutFile[] = files(root).map((path) => ({
+      path,
+      mtime: toMs(fs.stat(path).mtime) / 1000,
+      data: fs.readFile(path).buffer as ArrayBuffer,
+    }));
+    keep = true;
+    return { exit_code: exitCode, cancelled: false, outputs, changed, io: { ...io } };
+  } finally {
+    putBack(root, earlier, keep);
   }
-  const removed = [...before.keys()].filter((path) => !after.has(path));
-  return { exit_code: exitCode, outputs, changed, removed, io: { ...io } };
 }
 
-/** Every file under `root`, as path -> "size:mtime-ms". */
-function tree(root: string): Map<string, string> {
-  const found = new Map<string, string>();
+/** Whether the page has asked to cancel job `id`. */
+function cancelled(id: string): boolean {
+  return control !== null && Atomics.load(control, CANCEL_JOB) === Number(id);
+}
+
+/**
+ * After a run: the earlier reports back under `root`. With `keep`, those the run
+ * did not rewrite join what it wrote; without, what it wrote is removed first.
+ */
+function putBack(root: string, earlier: string, keep: boolean): void {
+  if (!keep) {
+    removeTree(root);
+    fs.rename(earlier, root);
+    return;
+  }
+  for (const path of files(earlier)) {
+    const target = root + path.slice(earlier.length);
+    if (fs.analyzePath(target).exists) continue; // rewritten by this run
+    fs.mkdirTree(target.slice(0, target.lastIndexOf("/")));
+    fs.rename(path, target);
+  }
+  removeTree(earlier);
+}
+
+/** Every file under `root`, by path. */
+function files(root: string): string[] {
+  const found: string[] = [];
   const walk = (dir: string) => {
     for (const name of fs.readdir(dir)) {
       if (name === "." || name === "..") continue;
       const path = `${dir}/${name}`;
-      const st = fs.stat(path);
-      if (fs.isDir(st.mode)) walk(path);
-      else found.set(path, `${st.size}:${toMs(st.mtime)}`);
+      if (fs.isDir(fs.stat(path).mode)) walk(path);
+      else found.push(path);
     }
   };
   walk(root);
   return found;
+}
+
+function removeTree(dir: string): void {
+  for (const name of fs.readdir(dir)) {
+    if (name === "." || name === "..") continue;
+    const path = `${dir}/${name}`;
+    if (fs.isDir(fs.stat(path).mode)) removeTree(path);
+    else fs.unlink(path);
+  }
+  fs.rmdir(dir);
 }
 
 function toMs(time: Date | number): number {

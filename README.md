@@ -847,8 +847,11 @@ The reports are byte-identical to a native run's, apart from the file paths
 most: every read of a picked file is a round trip to the browser process, so
 the worker reads through a small block cache (`frontend/src/browser/worker.ts`).
 
-One command runs at a time. Cancelling restarts Python in the tab, which takes
-a couple of seconds; earlier reports and picked folders are kept.
+One command runs at a time. Cancelling stops it within a fraction of a second,
+the way Ctrl-C would, and nothing the cancelled run wrote is kept: earlier
+reports stay exactly as they were. That needs the page to be cross-origin
+isolated, which its headers arrange; where it is not, a cancel restarts Python
+in the tab instead, which takes a couple of seconds, with the same result.
 
 ### Build and deploy
 

@@ -28,7 +28,8 @@ export default defineConfig(({ mode }) => {
     // Module workers: Pyodide refuses to run in a classic one.
     worker: { format: "es" },
     server: forBrowser
-      ? {}
+      ? // As src/browser/_headers sets them, so a cancel interrupts Python here too.
+        { headers: { "Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Embedder-Policy": "require-corp" } }
       : {
           proxy: {
             "/api": {

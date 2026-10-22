@@ -7,8 +7,16 @@
 # the page and in the Python worker alike, and this origin serves only static
 # files. 'wasm-unsafe-eval' lets Pyodide compile its WebAssembly, and nothing
 # else. media-src blob: is the player, which plays picked files by blob URL.
+#
+# The two Cross-Origin headers make the page cross-origin isolated, which is
+# what makes SharedArrayBuffer available, and that is how Cancel interrupts
+# Python mid-run (browser/protocol.ts). They cost nothing here because every
+# file comes from this origin. On every file, worker script included: Chromium
+# isolates a dedicated worker by its own response's headers.
 /*
   Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; media-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
 

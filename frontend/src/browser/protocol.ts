@@ -49,17 +49,32 @@ export interface OutFile {
   data: ArrayBuffer;
 }
 
+/**
+ * A run's result. A cancelled run changed nothing: the worker dropped what it
+ * wrote, so `outputs` and `changed` are empty. `exit_code` is null for a run
+ * cancelled before it started.
+ */
 export interface RunResult {
-  exit_code: number;
+  exit_code: number | null;
+  cancelled: boolean;
   outputs: JobOutput[];
   changed: OutFile[];
-  removed: string[];
 }
+
+/**
+ * The cancel channel: an Int32Array over a SharedArrayBuffer the page and the
+ * worker both hold, when the page is cross-origin isolated. The page writes the
+ * job's number to CANCEL_JOB, then SIGINT to SIGNAL, the slot Pyodide polls
+ * while Python runs. Shared memory because a message would wait behind the run.
+ */
+export const SIGNAL = 0;
+export const CANCEL_JOB = 1;
+export const SIGINT = 2;
 
 export type Staged = { rel: string; file: File };
 
 export type ToWorker =
-  | { type: "init"; id: number; base: string; blockSize: number | null }
+  | { type: "init"; id: number; base: string; blockSize: number | null; control: Int32Array | null }
   | { type: "call"; id: number; name: string; args: Record<string, unknown> }
   | { type: "run"; id: number; job: string; command: string; argv: string[] }
   | { type: "stage"; id: number; files: Staged[] }

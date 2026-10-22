@@ -355,6 +355,9 @@ both missing and extra (`is_valid: False`), while
 pre-refactor code. If cross-validation reports a total mismatch, check the path
 style before hunting for a real fault.
 
+**Redirecting its output on Windows can crash it** (cp1252); see "Planned
+fixes" below.
+
 **`--missing-metadata` is a second mode, not a fourth step.** It skips the
 export entirely and runs `missing_metadata.run`: list every audio file whose
 tags lack a title, an artist, or both, print them, and write
@@ -536,6 +539,9 @@ write `missing_<playlist>.csv` and `matched_<playlist>.csv` to
 client and the playlist model started out in this package and moved to core
 when `playlist-export` needed them (rule 1); a 403 from Spotify is reported
 here with the CSV advice, not as a failure.
+
+**Redirecting its output on Windows can crash it before any report is
+written** (cp1252); see "Planned fixes" below.
 
 - `matching.py` — title + artist, three outcomes: `owned`, `maybe`, `missing`.
   **`maybe` is the design, not a hedge:** a false `owned` hides a track the user
@@ -721,14 +727,36 @@ What is load-bearing:
   result. `--missing-metadata`: no cache 33–35s, 64 KiB 18–20s, 256 KiB 18s,
   1 MiB 28s (it reads 5.9 GB). `?block=N` on the page (0 = off) overrides it
   and logs each run's I/O to `console.debug` — a measuring knob.
-- **Cancel restarts Python.** Interrupting it needs SharedArrayBuffer, so
-  cross-origin isolation, which is not set up. Cancel terminates the worker
-  and starts another, which re-mounts every pick and restores every report.
-  Nothing here can need a `finally` (no borrowed fpcalc). Measured: cancelled in
-  0.3s, reports kept, the next run fine.
+- **Cancel interrupts Python, and a cancelled run changes no report.**
+  `_headers` sends `Cross-Origin-Opener-Policy: same-origin` and
+  `-Embedder-Policy: require-corp` (Vite's browser-mode dev server too), so the
+  page is cross-origin isolated and has SharedArrayBuffer. The page writes the
+  job's number, then SIGINT, into an Int32Array shared with the worker
+  (`protocol.ts`), and Pyodide's interrupt buffer turns that into a
+  KeyboardInterrupt, `finally` blocks and all. Three things make it safe:
+  - *All or nothing for `/out`.* `worker.ts`'s `run` renames `/out` aside and
+    runs into an empty one; `putBack` then restores the earlier reports, and
+    keeps what the run wrote only if it was not cancelled. Renames, no copies.
+    It relies on no command reading its own earlier reports (none does).
+    Whether a run was cancelled is the shared job number, read after the run,
+    not how Python ended: a cancel landing as a command finishes still cancels.
+  - *`browser._on_cancel`* raises only inside `run`'s `try`, and once per run.
+    A late cancel reaches Python during some other call, which must not fail
+    for it; the page signals every 250 ms, because Pyodide clears the buffer
+    unatomically and can drop a write; a second raise would cut the first
+    one's `finally` short. The worker clears a stale signal before each run.
+  - *The old cancel as the fallback:* without isolation, or if the command has
+    not stopped after 5s (`CANCEL_GRACE_MS`), the page terminates the worker
+    and starts another, which re-mounts every pick and restores every report.
+  Measured on the reference USB: `catalog` cancelled 0.2s after the click,
+  `analyze` 0.4s (both including the page's poll); an `analyze` rerun cancelled
+  20s into rewriting its reports left the page's copies the same objects and
+  Python's own tables at 3,665 / 76,118 rows, and the next run was
+  byte-identical. Isolation costs nothing measurable: `analyze` 84.6s/84.7s
+  isolated, 91.7s/84.0s not, back to back. The restart fallback: 0.2s.
 - **Reports live on the page as well as in Python's `/out`.** After each run
-  the worker sends every changed file under `/out` back as bytes. Those copies
-  are what survives a cancel, what `api.reports()` lists (instantly, even while
+  the worker sends every file the run wrote back as bytes. Those copies
+  are what survives a restart, what `api.reports()` lists (instantly, even while
   a run blocks the worker) and what *Open raw* opens; `api.table()` goes to
   Python and waits out a run. Each report is held twice, which matters only for
   `--export-beats`.
@@ -764,14 +792,17 @@ byte-identical to native once `C:\…\` paths are mapped to `/music/<folder>/…
 
 **Verified** in headless Edge via `puppeteer-core` with the CSP enforced: all
 four commands through the real forms, byte-compared; playback of a picked file;
-cancel mid-`analyze` and a rerun after; light, dark and phone width with no
+cancel mid-`catalog` and mid-`analyze`, interrupting and restarting, with the
+reports hashed before and after; light, dark and phone width with no
 horizontal scroll; zero console errors throughout. `npm run build` and
 `sdm web` re-checked unchanged. `showDirectoryPicker` was exercised through an
 origin-private-file-system handle on a 153-file subset (CDP cannot answer that
 picker for a real folder) — reports identical to the input picker and to
 native. **Not verified:** that picker on a real folder, a drive root (`D:\`)
-in either picker, the prompts' exact wording, Firefox and Safari, and a real
-Cloudflare deploy.
+in either picker, the prompts' exact wording, Firefox and Safari, a real
+Cloudflare deploy, and three cancel paths no test could time: the grace
+fallback (a command that ignores the interrupt), a cancel landing just as a
+run ends, and one sent while the run still waits behind another call.
 
 ## Conventions
 
@@ -792,6 +823,97 @@ Cloudflare deploy.
 - `.gitignore` excludes `*.csv`, `*.txt`, `out/`, `tmp/`, `deprecated/`, and
   `sync*.json`. **No CSV or TXT file in this repo is tracked** — every catalog
   export, report and sidecar you see is a local artifact.
+
+## Planned fixes
+
+Bugs that are understood and have a chosen fix that has not been applied yet.
+Unlike `spotify`'s, these are meant to be fixed — when asked to.
+
+### Redirected output crashes on Windows (cp1252)
+
+**The bug.** On Windows a redirected stdout is a plain file in the ANSI code
+page (cp1252) with strict errors; only a real console gets UTF-8. Any `print`
+of a character outside cp1252 raises `UnicodeEncodeError`, and the command
+exits with 1. A pipe can hide that exit code (`| more`, or Git Bash's `| cat`). stderr is
+unaffected, because Python already gives it `backslashreplace`.
+
+**Only what a command prints triggers it**, not every non-cp1252 file name.
+Reproduced from a fresh PowerShell 5.1 with `> file`:
+
+- `catalog`: `exporter.run` prints the duplicate groups' title/artist keys
+  (the test clone's PSY "Gangnam Style (강남스타일)" pair is enough), the
+  export result's metadata errors, and the validation lists (every path, when
+  the path-style bug in `catalog` above fires). The CSV and sidecar are already
+  written by then; the duplicate list and the audit result are lost.
+- `catalog --missing-metadata`: each listed path. The CSV is written first.
+- `playlist-diff`: each track's artist and title, printed **before any report
+  is written**, so the run loses everything.
+- Exposed but not reproduced: `playlist-export` (playlist name, output path)
+  and `quality` (`df.to_string()` includes file names). `analyze`,
+  `duplicates` and `rekordbox` print only paths the user typed, and counts;
+  every `--help` redirects fine. The test clone has 48 non-cp1252 audio paths,
+  so a redirected full-library `sdm catalog` would crash.
+
+**The fix: change the error handler, not the encoding.** First thing in
+`cli.main`, before anything can print, `--help` included:
+
+```python
+for stream in (sys.stdout, sys.stderr):
+    reconfigure = getattr(stream, "reconfigure", None)  # None under pythonw
+    if reconfigure is not None:
+        reconfigure(errors="backslashreplace")
+```
+
+Everything that prints today keeps its exact bytes; whatever cannot be encoded
+prints as `\uXXXX` instead of ending the run. It also covers lone surrogates,
+which not even strict UTF-8 can encode.
+
+**Why not switch redirected output to UTF-8**, which looks like the obvious
+fix: PowerShell 5.1's `>` does not pass a program's bytes through. It decodes
+them with `[Console]::OutputEncoding` (IBM437 on this machine) and writes
+UTF-16, so UTF-8 output turns every non-ASCII character into mojibake
+(`é` → `├⌐`) in the default shell. Today's cp1252 output works there for
+everything cp1252 covers. Git Bash and cmd would have gained. For real
+characters in a redirected file, document `$env:PYTHONUTF8=1` together with
+`[Console]::OutputEncoding = [Text.UTF8Encoding]::new()`.
+
+**What else it touches.** `sdm web`: `child.py` already runs with
+`PYTHONIOENCODING=utf-8` (strict) from `jobs.py`, and the fix changes only its
+error handler. Keep that variable; it is what makes the pipe UTF-8. The browser
+build: `sdm.browser.run` calls `cli.main` on every run, and Pyodide's stdout is
+a `TextIOWrapper` that `reconfigure` works on. Output still reaches the worker,
+and repeating the call each run is harmless.
+
+**Verifying — a trap first:** Claude Code's shell sets
+`PYTHONIOENCODING=utf-8:surrogateescape`, which hides the bug. Reproduce in a
+fresh PowerShell window, or run `Remove-Item env:PYTHONIOENCODING` first. Always
+pass `--out-dir` into a scratch folder, and never write into the test clone:
+
+1. Copy the clone's PSY duplicate pair into a scratch folder, then
+   `sdm catalog <dir> > o.txt; $LASTEXITCODE`: 0, `강` in `o.txt`, and the
+   audit printed.
+2. `catalog --missing-metadata` on a folder holding an untagged `Трек.mp3`, and
+   `playlist-diff` with a CSV containing a Korean title: exit 0, and both
+   reports written.
+3. Each of the above again with `| Out-String`, Git Bash `>` and cmd `> NUL`.
+4. Unredirected in a console, 강남스타일 still shows as itself, not escaped.
+5. `sdm --help > h.txt` and `sdm catalog --help > h.txt`.
+6. A redirected full-clone `sdm catalog`: exit 0, and the CSV and sidecar
+   byte-identical to a run from before the fix.
+7. In `sdm web`, the Korean title shows in a job log; the browser build's log
+   is unchanged.
+
+### Lone surrogates in file names crash the report writers
+
+Found while investigating the crash above, and **not fixed by its fix**. NTFS
+allows a file name containing an unpaired UTF-16 surrogate, and `os.listdir`
+returns it as `'\ud800'`. `core/report.py` opens every report as strict UTF-8,
+which cannot encode one, so both `catalog` modes crash in `write_csv` on such
+a file, even with `PYTHONUTF8=1`. The test clone has no such name; this was
+seen only on a constructed file. A fix needs a decision first: what such a
+name should look like in a report. Escaping it would also change the path the
+catalog sidecar records, which the cross-validation compares against the real
+directory, so check how the sidecar is read back before choosing.
 
 ## Planned work
 

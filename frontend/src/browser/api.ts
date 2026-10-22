@@ -4,7 +4,7 @@
 //
 // Python lives in a worker (worker.ts). What lives here is what has to outlive
 // it or answer while it is busy: job records and their logs (polled by the job
-// page exactly as from the server), a copy of every report (a cancel ends the
+// page exactly as from the server), a copy of every report (a cancel can end the
 // worker, and the report list must open while a run blocks it), and the folders
 // the visitor picked (to mount again after a restart, and to play audio from).
 import { ApiError } from "../api";
@@ -24,6 +24,7 @@ import type {
   TablePage,
 } from "../api";
 import { keepForMount, mountName } from "./files";
+import { CANCEL_JOB, SIGINT, SIGNAL } from "./protocol";
 import type { BootInfo, FromWorker, MountedFolder, RunResult, Staged, ToWorker } from "./protocol";
 
 export { ApiError };
@@ -40,6 +41,12 @@ const MAX_LINES = 20_000;
 /** Files per message when handing a picked folder to the worker; small enough to show progress between. */
 const STAGE_CHUNK = 1_000;
 
+/** How long a cancelled command gets to stop before Python is restarted instead. */
+const CANCEL_GRACE_MS = 5_000;
+
+/** How often a cancel is signalled again meanwhile; see `_on_cancel` in sdm/browser.py. */
+const RESIGNAL_MS = 250;
+
 const BASE = new URL(import.meta.env.BASE_URL, window.location.href).href;
 
 /** `?block=N` sets the read cache's block size, 0 turns it off. For measuring; see worker.ts. */
@@ -52,6 +59,11 @@ type Request = ToWorker extends infer M ? (M extends { id: number } ? Omit<M, "i
 class Python {
   private worker: Worker;
   private nextId = 1;
+  /**
+   * The cancel channel (protocol.ts). SharedArrayBuffer exists only on a
+   * cross-origin isolated page (`_headers`); without it, a cancel restarts Python.
+   */
+  private control = crossOriginIsolated ? new Int32Array(new SharedArrayBuffer(8)) : null;
   private waiting = new Map<
     number,
     { resolve: (value: unknown) => void; reject: (error: unknown) => void; progress?: (seen: number, kept: number) => void }
@@ -75,7 +87,20 @@ class Python {
     };
     // A worker that fails to load (an old browser, a blocked script) says so only here.
     this.worker.onerror = (event) => this.fail(new Error(event.message || "the Python worker could not start"));
-    this.ready = this.send<BootInfo>({ type: "init", base: BASE, blockSize: BLOCK_KNOB === null ? null : Number(BLOCK_KNOB) });
+    this.ready = this.send<BootInfo>({
+      type: "init",
+      base: BASE,
+      blockSize: BLOCK_KNOB === null ? null : Number(BLOCK_KNOB),
+      control: this.control,
+    });
+  }
+
+  /** Ask Python to stop job `job`'s command, as Ctrl-C would. False if it cannot be asked. */
+  interrupt(job: number): boolean {
+    if (!this.control) return false;
+    Atomics.store(this.control, CANCEL_JOB, job);
+    Atomics.store(this.control, SIGNAL, SIGINT);
+    return true;
   }
 
   send<T>(message: Request, transfer: Transferable[] = [], progress?: (seen: number, kept: number) => void): Promise<T> {
@@ -189,7 +214,6 @@ const outRoot = () => info?.out_root ?? "/out";
 const outPath = (path: string) => (path.startsWith("/") ? path : `${outRoot()}/${path}`);
 
 function keepReports(result: RunResult): void {
-  for (const path of result.removed) dropReport(path);
   for (const file of result.changed) {
     dropReport(file.path);
     // Text types, so "Open raw" shows a report in the tab instead of downloading it.
@@ -297,6 +321,20 @@ async function pickFolder(
   return { path: folder.path, summary: describe(folder) };
 }
 
+/**
+ * Cancel by ending the worker mid-run and starting another. Nothing it was
+ * writing survives it, and the new one gets the page's copies of the reports.
+ */
+function restart(job: Job, why: string): void {
+  python.terminate();
+  appendLine(job.id, ["err", `cancelled: ${why} Earlier reports are kept.`]);
+  finish(job, "cancelled", null);
+  const next = new Python(() => undefined, appendLine);
+  next.ready = remountAndRestore(next);
+  python = next;
+  watchBoot(next);
+}
+
 /** After a restart: mount every picked folder again and put the reports back. */
 async function remountAndRestore(next: Python): Promise<BootInfo> {
   const booted = await next.ready;
@@ -353,8 +391,14 @@ export const api = {
       jobs.push(job);
       python.send<RunResult & { io: { reads: number; bytes: number; ms: number } }>({ type: "run", job: job.id, command, argv }).then(
         (result) => {
+          if (result.cancelled) {
+            appendLine(job.id, ["err", "Nothing this run wrote was kept; earlier reports are as they were."]);
+            finish(job, "cancelled", result.exit_code);
+            return;
+          }
           keepReports(result);
           job.outputs = result.outputs;
+          if (job.cancel_requested) appendLine(job.id, ["err", "The command had finished before the cancel reached it; its reports are kept."]);
           finish(job, result.exit_code === 0 ? "succeeded" : "failed", result.exit_code);
           if (BLOCK_KNOB !== null) {
             const seconds = ((job.ended ?? 0) - job.started).toFixed(2);
@@ -373,19 +417,31 @@ export const api = {
     }
   },
 
-  // Python cannot be interrupted without cross-origin isolation, so a cancel
-  // ends the worker and starts another; the reports and picks are carried over.
+  // Python is interrupted, as Ctrl-C would, and the worker drops what the run
+  // wrote; the run's reply says so. Signalled until it stops, because Pyodide
+  // can miss a signal. Without cross-origin isolation Python cannot be
+  // interrupted, and a command that has not stopped in CANCEL_GRACE_MS will not
+  // be: either way the worker is ended and another started instead.
   cancelJob: async (id: string): Promise<JobDetail> => {
     const job = findJob(id);
-    if (job.status === "running") {
+    if (job.status === "running" && !job.cancel_requested) {
       job.cancel_requested = true;
-      python.terminate();
-      appendLine(job.id, ["err", "cancelled: Python was stopped and restarted in this tab. Earlier reports are kept."]);
-      finish(job, "cancelled", null);
-      const next = new Python(() => undefined, appendLine);
-      next.ready = remountAndRestore(next);
-      python = next;
-      watchBoot(next);
+      const current = python;
+      if (current.interrupt(Number(job.id))) {
+        const asked = Date.now();
+        const timer = window.setInterval(() => {
+          if (job.status !== "running" || python !== current) {
+            window.clearInterval(timer);
+          } else if (Date.now() - asked < CANCEL_GRACE_MS) {
+            current.interrupt(Number(job.id));
+          } else {
+            window.clearInterval(timer);
+            restart(job, "the command did not stop in time, so Python was restarted in this tab.");
+          }
+        }, RESIGNAL_MS);
+      } else {
+        restart(job, "Python was stopped and restarted in this tab.");
+      }
     }
     return detail(job, 1e9);
   },

@@ -17,9 +17,13 @@ processes, and each reason is answered another way here:
   - stdout: one run at a time in the whole tab (Pyodide is single-threaded), so
     no two runs share it. The worker forwards each line as it is printed.
   - `core.paths` roots: set once at boot to `/out` and `/tmp` and never changed.
-  - cancelling: the page terminates the worker and starts a new one. Python
-    gets no chance to unwind, which is acceptable only because nothing that
-    needs a `finally` (a borrowed fpcalc) can run here.
+  - cancelling: the page writes SIGINT into Pyodide's interrupt buffer, shared
+    memory the worker reads while Python runs, and the command stops on a
+    KeyboardInterrupt as it would on Ctrl-C, `finally` blocks and all. The
+    worker then drops whatever the run wrote (`worker.ts`). That needs
+    cross-origin isolation (`_headers`); a page without it, or a command that
+    does not stop in time, gets the old cancel instead: the page terminates the
+    worker and starts another.
 
 **What runs here.** `ONLINE_COMMANDS`, and the reason each other command does
 not is a missing piece of the machine, not of the browser build: `duplicates`
@@ -33,6 +37,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import signal
 import sys
 import traceback
 import types
@@ -64,6 +69,10 @@ PLAYLIST_ROOT = "/playlist"
 #: Every path a run reported writing, for `reports.resolve`'s allow-list.
 _written: set[str] = set()
 _tables = reports.TableReader()
+
+#: Whether a command is running, and whether a cancel has interrupted it. See `_on_cancel`.
+_running = False
+_interrupted = False
 
 
 def call(name: str, args_json: str) -> str:
@@ -101,6 +110,7 @@ def boot() -> dict:
     paths.configure(OUT_ROOT, TMP_ROOT)
     for root in (OUT_ROOT, TMP_ROOT, MUSIC_ROOT, PLAYLIST_ROOT):
         os.makedirs(root, exist_ok=True)
+    signal.signal(signal.SIGINT, _on_cancel)
     return {
         "version": __version__,
         "out_root": OUT_ROOT,
@@ -153,9 +163,19 @@ def prepare(command: str, values: Any) -> dict:
 def run(argv: list[str]) -> int:
     """Run one command in this interpreter; its exit code. Output goes to the worker."""
     from sdm import cli
+    from sdm.web.child import CANCELLED_EXIT
 
+    global _running, _interrupted
+    _interrupted = False
     try:
-        code = cli.main(list(argv))
+        try:
+            _running = True
+            code = cli.main(list(argv))
+        finally:
+            _running = False
+    except KeyboardInterrupt:  # the page's Cancel; see `_on_cancel`
+        print("cancelled", file=sys.stderr)
+        code = CANCELLED_EXIT
     except SystemExit as exc:  # argparse, or a handler that exits
         code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
     except Exception:  # noqa: BLE001 - a traceback in the log, like a crashed child
@@ -235,6 +255,22 @@ def _check_paths(fields: dict[str, dict], values: dict) -> None:
             raise schema.InvalidRequest(
                 f"{field['label']}: {value} is not a folder picked in this tab. "
                 "Choose it again - picks do not survive a reload.")
+
+
+def _on_cancel(signum: int, frame: Any) -> None:
+    """SIGINT, which only the page's Cancel sends: interrupt the command, once.
+
+    Only inside `run`'s `try`, where the KeyboardInterrupt is caught. The page
+    cannot know exactly when a command ends, so a cancel may arrive after it
+    has, while Python answers some other call — one that must not fail for it.
+    And only once, because the page signals again until the run stops (Pyodide
+    can lose a signal written as it clears the buffer), and a second
+    KeyboardInterrupt would cut short the `finally` blocks the first one runs.
+    """
+    global _interrupted
+    if _running and not _interrupted:
+        _interrupted = True
+        raise KeyboardInterrupt
 
 
 def _shim_pyrekordbox() -> None:

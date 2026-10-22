@@ -92,7 +92,7 @@ export function JobPage({ id, onChange }: { id: string; onChange: () => void }) 
               disabled={job.cancel_requested}
               onClick={async () => {
                 const what = browser
-                  ? "Python restarts in this tab, which takes a few seconds; reports from earlier runs are kept."
+                  ? "Nothing it has written is kept; reports from earlier runs stay as they were."
                   : "The run stops; nothing it has already written is undone.";
                 if (!window.confirm(`Cancel sdm ${job.command}? ${what}`)) return;
                 try {
