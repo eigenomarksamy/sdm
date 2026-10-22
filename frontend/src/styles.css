@@ -58,6 +58,18 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* All text on the page is lowercase: labels, the argparse help the forms are
+     built from, logs and report data alike. A rule rather than lowercased
+     strings, because most of what shows comes from the server. */
+  text-transform: lowercase;
+}
+/* The browser's own stylesheet gives form controls text-transform: none, so
+   they do not inherit it. A text box's value is what was typed and keeps its
+   case; everything else on a control is display. */
+button,
+select,
+::placeholder {
+  text-transform: lowercase;
 }
 
 a {
@@ -141,8 +153,6 @@ h2 {
 }
 .nav-label {
   font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--muted);
   margin: 0.9rem 0.6rem 0.2rem;
 }
