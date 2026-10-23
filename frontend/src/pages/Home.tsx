@@ -15,7 +15,8 @@ export function Home({ commands, jobs, session }: { commands: Command[]; jobs: J
   return (
     <div className="page">
       <header className="page-head">
-        <h1>Music library toolchain. What does SDM stand for? I don't remember.</h1>
+        <h1>Music library toolchain.</h1>
+        <h2>SDM stands for what? Thought you might never ask, I don't remember, but music is political and a form of resistance.</h2>
         {browser ? (
           <>
             <PrivacyNote />
