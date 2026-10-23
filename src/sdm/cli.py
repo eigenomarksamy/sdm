@@ -76,6 +76,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    # A redirected stdout on Windows is the ANSI code page with strict errors,
+    # so one track name outside it ended the run with UnicodeEncodeError —
+    # before playlist-diff had written anything. Only the error handler
+    # changes: switching the encoding to UTF-8 would turn every accent into
+    # mojibake under PowerShell 5.1's `>`, which re-decodes what it captures.
+    # First, so that nothing (--help included) prints before it.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)  # None under pythonw
+        if reconfigure is not None:
+            reconfigure(errors="backslashreplace")
+
     # Checked before parsing, because argparse rejects an unregistered
     # subcommand with a message that gives no hint the command once existed.
     argv_list = list(sys.argv[1:] if argv is None else argv)

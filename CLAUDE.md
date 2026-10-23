@@ -302,6 +302,10 @@ identical inputs.
   takes `encoding="utf-8-sig"` for a file meant to be opened in Excel, which
   reads BOM-less UTF-8 as ANSI and mangles every accented name; only the
   playlist export uses it — the reports keep plain UTF-8, unchanged.
+  Every report is opened with `REPORT_ERRORS` (`backslashreplace`), through
+  `open_report` — which `analyze` streams its CSVs through too — so a lone
+  surrogate in a file name lands as the text `\ud800` instead of crashing the
+  writer. The catalog sidecar alone is `surrogatepass`; see "Text encoding".
   `write_duplicate_report` is the shared duplicate CSV+JSON writer, so a folder
   scan and a Rekordbox run emit the same shape and can be diffed against each
   other.
@@ -385,9 +389,6 @@ both missing and extra (`is_valid: False`), while
 `sdm catalog "C:\Users\...\postmodern"` reports `is_valid: True`. Same in the
 pre-refactor code. If cross-validation reports a total mismatch, check the path
 style before hunting for a real fault.
-
-**Redirecting its output on Windows can crash it** (cp1252); see "Planned
-fixes" below.
 
 **`--missing-metadata` is a second mode, not a fourth step.** It skips the
 export entirely and runs `missing_metadata.run`: list every audio file whose
@@ -589,8 +590,7 @@ flags → one CSV, `out/quality/quality_<folder>.csv`. **Read-only.** The old
   releases the GIL, and processes measured only 8% faster. The main thread
   waits with a 0.5 s timeout so KeyboardInterrupt lands. Results are sorted by
   path, so a report is byte-identical whatever `--jobs` was (checked at 2 and
-  4). File names are printed only after the CSV is written (cp1252, see
-  "Planned fixes"). Columns are grouped by aspect: measured (no prefix), then
+  4). Columns are grouped by aspect: measured (no prefix), then
   `meta_` (the file's header and tags), then `rb_`; `issues` holds the flag
   kinds and `flags` the sentences, same order — the web view filters on the
   former.
@@ -638,9 +638,6 @@ write `missing_<playlist>.csv` and `matched_<playlist>.csv` to
 client and the playlist model started out in this package and moved to core
 when `playlist-export` needed them (rule 1); a 403 from Spotify is reported
 here with the CSV advice, not as a failure.
-
-**Redirecting its output on Windows can crash it before any report is
-written** (cp1252); see "Planned fixes" below.
 
 - `matching.py` — title + artist, three outcomes: `owned`, `maybe`, `missing`.
   **`maybe` is the design, not a hedge:** a false `owned` hides a track the user
@@ -975,98 +972,105 @@ with a real client ID, from either web front end.
   `sync*.json`. **No CSV or TXT file in this repo is tracked** — every catalog
   export, report and sidecar you see is a local artifact.
 
-## Planned fixes
+## Text encoding
 
-Bugs that are understood and have a chosen fix that has not been applied yet.
-Unlike `spotify`'s, these are meant to be fixed — when asked to.
+Two crashes, both fixed 2026-10-22, both from strings an encoder refused. What
+follows is why each fix has the shape it has.
 
-### Redirected output crashes on Windows (cp1252)
+### Printing: `cli.main` changes the error handler, not the encoding
 
-**The bug.** On Windows a redirected stdout is a plain file in the ANSI code
-page (cp1252) with strict errors; only a real console gets UTF-8. Any `print`
-of a character outside cp1252 raises `UnicodeEncodeError`, and the command
-exits with 1. A pipe can hide that exit code (`| more`, or Git Bash's `| cat`). stderr is
-unaffected, because Python already gives it `backslashreplace`.
+On Windows a redirected stdout is a plain file in the ANSI code page (cp1252)
+with strict errors; only a real console gets UTF-8. So any `print` of a
+character outside cp1252 raised `UnicodeEncodeError` and the command exited 1:
+`catalog` lost its duplicate list and audit, `catalog --missing-metadata` its
+listing, and `playlist-diff` — which prints each track before writing any
+report — everything. The test clone has 48 non-cp1252 audio paths.
 
-**Only what a command prints triggers it**, not every non-cp1252 file name.
-Reproduced from a fresh PowerShell 5.1 with `> file`:
+The first thing `cli.main` does, before anything can print (`--help`
+included), is `reconfigure(errors="backslashreplace")` on stdout and stderr
+(skipped where the stream is None, as under pythonw). Everything that printed
+before keeps its exact bytes; whatever cannot be encoded prints as `\uXXXX`
+— so a redirected file holds `강…`, not `강…` — and lone surrogates, which
+not even strict UTF-8 can encode, print the same way. A console is untouched:
+it is UTF-8, and 강남스타일 still shows as itself.
 
-- `catalog`: `exporter.run` prints the duplicate groups' title/artist keys
-  (the test clone's PSY "Gangnam Style (강남스타일)" pair is enough), the
-  export result's metadata errors, and the validation lists (every path, when
-  the path-style bug in `catalog` above fires). The CSV and sidecar are already
-  written by then; the duplicate list and the audit result are lost.
-- `catalog --missing-metadata`: each listed path. The CSV is written first.
-- `playlist-diff`: each track's artist and title, printed **before any report
-  is written**, so the run loses everything.
-- Exposed but not reproduced: `playlist-export` (playlist name, output path)
-  and `quality` (the path of each file it cannot decode — printed only after
-  the report is written, so a crash there costs the summary, not the run).
-  `analyze`,
-  `duplicates` and `rekordbox` print only paths the user typed, and counts;
-  every `--help` redirects fine. The test clone has 48 non-cp1252 audio paths,
-  so a redirected full-library `sdm catalog` would crash.
+**Do not switch redirected output to UTF-8 instead**, which looks like the
+obvious fix: PowerShell 5.1's `>` does not pass a program's bytes through. It
+decodes them with `[Console]::OutputEncoding` (IBM437 on this machine) and
+re-encodes, so UTF-8 output turns every non-ASCII character into mojibake
+(`é` → `├⌐`) in the default shell, while cp1252 output is right there for
+everything cp1252 covers. The README's "Where output goes" gives the recipe for
+real characters in a redirected file (`PYTHONUTF8=1` plus a UTF-8
+`[Console]::OutputEncoding`).
 
-**The fix: change the error handler, not the encoding.** First thing in
-`cli.main`, before anything can print, `--help` included:
+`sdm web`: `child.py` still runs with `PYTHONIOENCODING=utf-8` from `jobs.py`
+— keep it, it is what makes the pipe UTF-8 — and only its error handler
+changed, so a job that prints a surrogate name no longer dies. The browser
+build: `sdm.browser.run` calls `cli.main` on every run; Pyodide's stdout is a
+`TextIOWrapper`, `reconfigure` works on it, and repeating it is harmless.
 
-```python
-for stream in (sys.stdout, sys.stderr):
-    reconfigure = getattr(stream, "reconfigure", None)  # None under pythonw
-    if reconfigure is not None:
-        reconfigure(errors="backslashreplace")
-```
+**A trap when verifying anything here:** Claude Code's shell sets
+`PYTHONIOENCODING=utf-8:surrogateescape`, which hides the crash. Run
+`Remove-Item env:PYTHONIOENCODING` first, or use a fresh PowerShell window.
+And capture a UTF-8 program's output (node, or `PYTHONUTF8=1`) with Git Bash's
+`>`, not PowerShell's, for the reason above.
 
-Everything that prints today keeps its exact bytes; whatever cannot be encoded
-prints as `\uXXXX` instead of ending the run. It also covers lone surrogates,
-which not even strict UTF-8 can encode.
+### Reports: a lone surrogate is escaped, except in the catalog sidecar
 
-**Why not switch redirected output to UTF-8**, which looks like the obvious
-fix: PowerShell 5.1's `>` does not pass a program's bytes through. It decodes
-them with `[Console]::OutputEncoding` (IBM437 on this machine) and writes
-UTF-16, so UTF-8 output turns every non-ASCII character into mojibake
-(`é` → `├⌐`) in the default shell. Today's cp1252 output works there for
-everything cp1252 covers. Git Bash and cmd would have gained. For real
-characters in a redirected file, document `$env:PYTHONUTF8=1` together with
-`[Console]::OutputEncoding = [Text.UTF8Encoding]::new()`.
+NTFS stores names as unvalidated UTF-16, so a file name may hold half a
+surrogate pair, and `os.listdir` returns it as `'\ud800'`. Every report was
+opened as strict UTF-8, so every report writer crashed on such a file, even
+with `PYTHONUTF8=1`. The test clone has no such name; the fixtures were made by
+copying a track to one.
 
-**What else it touches.** `sdm web`: `child.py` already runs with
-`PYTHONIOENCODING=utf-8` (strict) from `jobs.py`, and the fix changes only its
-error handler. Keep that variable; it is what makes the pipe UTF-8. The browser
-build: `sdm.browser.run` calls `cli.main` on every run, and Pyodide's stdout is
-a `TextIOWrapper` that `reconfigure` works on. Output still reaches the worker,
-and repeating the call each run is harmless.
+What such a name looks like (decided 2026-10-22):
 
-**Verifying — a trap first:** Claude Code's shell sets
-`PYTHONIOENCODING=utf-8:surrogateescape`, which hides the bug. Reproduce in a
-fresh PowerShell window, or run `Remove-Item env:PYTHONIOENCODING` first. Always
-pass `--out-dir` into a scratch folder, and never write into the test clone:
+- **Reports**: the six characters `\ud800` — `REPORT_ERRORS` in
+  `core/report.py`, also what `cli.main` prints for it. In JSON this is no
+  approximation: inside a string it is JSON's own escape for that code point,
+  and `json.load` gives the exact path back, which opens. In CSV it keeps the
+  file valid UTF-8 for Excel, `sdm web`, `find_repeated` and
+  `read_playlist_csv`, at the cost of an ambiguity a report can live with: in a
+  full Windows path, `a\ud800.mp3` is also what a file `ud800.mp3` in a folder
+  `a` looks like.
+- **The catalog sidecar**: exact, `surrogatepass` in `write_lines` and
+  `read_lines`. The cross-validation set-diffs the sidecar against a fresh
+  walk, and must compare identities, not renderings — the ambiguity above
+  would let two files share one line. `validate_mp3_csv` is unchanged. The cost:
+  a line holding such a name is not valid UTF-8, so an editor shows
+  replacement characters there. **Do not move the sidecar onto
+  `REPORT_ERRORS`** to make it uniform.
 
-1. Copy the clone's PSY duplicate pair into a scratch folder, then
-   `sdm catalog <dir> > o.txt; $LASTEXITCODE`: 0, `강` in `o.txt`, and the
-   audit printed.
-2. `catalog --missing-metadata` on a folder holding an untagged `Трек.mp3`, and
-   `playlist-diff` with a CSV containing a Korean title: exit 0, and both
-   reports written.
-3. Each of the above again with `| Out-String`, Git Bash `>` and cmd `> NUL`.
-4. Unredirected in a console, 강남스타일 still shows as itself, not escaped.
-5. `sdm --help > h.txt` and `sdm catalog --help > h.txt`.
-6. A redirected full-clone `sdm catalog`: exit 0, and the CSV and sidecar
-   byte-identical to a run from before the fix.
-7. In `sdm web`, the Korean title shows in a job log; the browser build's log
-   is unchanged.
+Seen while verifying, not fixed: **`fpcalc` cannot fingerprint such a file** —
+both fixtures came back unfingerprintable while their copies under ordinary
+names matched, so `duplicates`/`rekordbox` count it among the unfingerprintable
+(a `--skip-fingerprint` run does group it). Most likely the name does not
+survive fpcalc's own conversion of its argument; not investigated.
 
-### Lone surrogates in file names crash the report writers
+### Verified
 
-Found while investigating the crash above, and **not fixed by its fix**. NTFS
-allows a file name containing an unpaired UTF-16 surrogate, and `os.listdir`
-returns it as `'\ud800'`. `core/report.py` opens every report as strict UTF-8,
-which cannot encode one, so both `catalog` modes crash in `write_csv` on such
-a file, even with `PYTHONUTF8=1`. The test clone has no such name; this was
-seen only on a constructed file. A fix needs a decision first: what such a
-name should look like in a report. Escaping it would also change the path the
-catalog sidecar records, which the cross-validation compares against the real
-directory, so check how the sidecar is read back before choosing.
+Fixtures in a scratch folder — the clone's PSY pair, an untagged `Трек.mp3`, a
+playlist CSV with Korean titles, two NTFS names with lone surrogates — and
+every crash above reproduced on the old code first. Then:
+
+- `catalog` (both modes, the surrogate folder included) and `playlist-diff`:
+  exit 0 and every report written under PowerShell `>`, `| Out-String`, cmd
+  `> NUL` and Git Bash `>`; `sdm --help` and `sdm catalog --help` redirected.
+- A real console (a new window, its screen buffer read back): 강남스타일 as
+  glyphs, no escape, stdout `utf-8`/`backslashreplace`.
+- The full clone, redirected, against a pre-fix worktree: `catalog`'s CSV and
+  sidecar, the `--missing-metadata` CSV, and `analyze`'s `analysis.csv`,
+  `phrases.csv` and `analysis.json` byte-identical; the audit `is_valid: True`.
+- Surrogate names: both `catalog` modes exit 0 with the audit `is_valid: True`;
+  `duplicates --skip-fingerprint` JSON round-trips each path exactly.
+- `sdm web`, a live server driven over its API: Korean titles in the job logs
+  as themselves; a `--missing-metadata` job on the surrogate folder succeeds.
+- The browser build's Python half in Pyodide under Node (the built wheels, the
+  worker's batched stdout, `sdm.browser.boot` then `run`): the run log is
+  identical before and after the fix.
+
+Not verified: `quality` and `playlist-export` redirected with a non-cp1252
+name to print (same mechanism, no fixture), a real browser tab, POSIX.
 
 ## Planned work
 

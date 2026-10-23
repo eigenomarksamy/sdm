@@ -20,7 +20,7 @@ from typing import Optional
 
 from sdm.core.anlz import TrackAnalysis, read_usb
 from sdm.core.paths import out_dir
-from sdm.core.report import ensure_dir, write_json
+from sdm.core.report import ensure_dir, open_report, write_json
 from sdm.core.tags import read_title_artist
 
 _TRACK_HEADER = (
@@ -74,10 +74,9 @@ def run(args: argparse.Namespace) -> int:
     phrase_csv = os.path.join(report_dir, "phrases.csv")
     beat_csv = os.path.join(report_dir, "beats.csv")
 
-    # newline="" for the same reason core.report opens files that way: without
-    # it the csv module writes a blank line between rows on Windows.
-    with open(track_csv, "w", newline="", encoding="utf-8") as track_file, \
-            open(phrase_csv, "w", newline="", encoding="utf-8") as phrase_file:
+    # Streamed, so not through write_csv — but opened as it opens a report.
+    with open_report(track_csv) as track_file, \
+            open_report(phrase_csv) as phrase_file:
         track_writer = csv.writer(track_file)
         phrase_writer = csv.writer(phrase_file)
         track_writer.writerow(_TRACK_HEADER)
@@ -86,7 +85,7 @@ def run(args: argparse.Namespace) -> int:
         beat_file = None
         beat_writer = None
         if args.export_beats:
-            beat_file = open(beat_csv, "w", newline="", encoding="utf-8")
+            beat_file = open_report(beat_csv)
             beat_writer = csv.writer(beat_file)
             beat_writer.writerow(_BEAT_HEADER)
 

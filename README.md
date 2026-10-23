@@ -202,6 +202,20 @@ sdm quality "F:/Songs" --output-csv report.csv        # -> ./out/quality/report.
 sdm quality "F:/Songs" --output-csv D:/audit/q.csv    # -> D:/audit/q.csv
 ```
 
+**Redirecting what a command prints** (`sdm catalog … > log.txt`) on Windows
+writes in the ANSI code page, so a name outside it — Korean, Cyrillic —
+appears as `\uXXXX` rather than as itself. For the real characters in
+PowerShell:
+
+```ps1
+$env:PYTHONUTF8 = 1; [Console]::OutputEncoding = [Text.UTF8Encoding]::new()
+sdm catalog "F:\Songs" > log.txt
+```
+
+Reports are UTF-8 either way. The one name a report cannot hold as-is is one
+containing a lone UTF-16 surrogate, which NTFS allows; it is written as the
+text `\ud800`.
+
 **Downloaded audio is not a report** and is deliberately left out of this. It
 goes wherever `sdm download --output` points, untouched by `--out-dir` — while
 that command is enabled.

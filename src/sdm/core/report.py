@@ -3,6 +3,15 @@
 Every feature that emits a report goes through here, so encoding and newline
 handling are decided once. On Windows the `newline=""` argument is what keeps
 `csv` from writing blank lines between rows.
+
+A report must survive a string UTF-8 cannot encode: a lone surrogate. NTFS
+stores names as unvalidated UTF-16, so a file named with half a surrogate pair
+is legal, `os.listdir` returns it as `'\\ud800'`, and a strict writer crashed
+on it partway through a report. Reports write it as the six characters
+`\\ud800` instead (`REPORT_ERRORS`) — what `cli.main` prints for it too. In
+JSON that is no approximation: inside a string it is JSON's own escape for the
+code point, and reads back exactly. The catalog sidecar is the exception, see
+`write_lines`.
 """
 from __future__ import annotations
 
@@ -10,10 +19,22 @@ import csv
 import json
 import os
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, Iterable, Sequence
+from typing import IO, TYPE_CHECKING, Any, Iterable, Sequence
 
 if TYPE_CHECKING:
     from sdm.core.duplicates import DuplicateGroup
+
+#: How a report writes what UTF-8 cannot encode. See the module docstring.
+REPORT_ERRORS = "backslashreplace"
+
+
+def open_report(path: str, *, encoding: str = "utf-8") -> IO[str]:
+    """Open `path` for a CSV report: `newline=""`, UTF-8, `REPORT_ERRORS`.
+
+    For a writer that streams rows itself (`analyze`) rather than handing them
+    to `write_csv`, so its files are written exactly as everyone else's.
+    """
+    return open(path, "w", newline="", encoding=encoding, errors=REPORT_ERRORS)
 
 
 def write_csv(
@@ -29,7 +50,7 @@ def write_csv(
     reads a UTF-8 CSV without a byte-order mark as the ANSI code page and turns
     "Súcubo" into "SÃºcubo".
     """
-    with open(path, "w", newline="", encoding=encoding) as f:
+    with open_report(path, encoding=encoding) as f:
         writer = csv.writer(f)
         writer.writerow(header)
         for row in rows:
@@ -38,20 +59,27 @@ def write_csv(
 
 def write_json(path: str, payload: Any) -> None:
     """Write `payload` as indented UTF-8 JSON, leaving non-ASCII characters intact."""
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8", errors=REPORT_ERRORS) as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
 
 
 def write_lines(path: str, lines: Iterable[str]) -> None:
-    """Write one string per line. Used for the catalog's cross-validation sidecar."""
-    with open(path, "w", newline="", encoding="utf-8") as f:
+    """Write one string per line. Used for the catalog's cross-validation sidecar.
+
+    `surrogatepass`, not `REPORT_ERRORS`: the sidecar is compared against a
+    fresh walk of the directory, so it must hold each path exactly. Escaped,
+    a file named `a` + U+D800 + `.mp3` and a file `ud800.mp3` in a folder `a`
+    would both write `a\\ud800.mp3`. The cost is that a line holding a lone
+    surrogate is not valid UTF-8, and an editor shows replacement characters.
+    """
+    with open(path, "w", newline="", encoding="utf-8", errors="surrogatepass") as f:
         for line in lines:
             f.write(f"{line}\n")
 
 
 def read_lines(path: str) -> list[str]:
-    """Read a file written by `write_lines` back into a list."""
-    with open(path, "r", encoding="utf-8") as f:
+    """Read a file written by `write_lines` back into a list, surrogates intact."""
+    with open(path, "r", encoding="utf-8", errors="surrogatepass") as f:
         return [line.rstrip("\n") for line in f]
 
 
