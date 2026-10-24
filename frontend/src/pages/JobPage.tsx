@@ -1,11 +1,21 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { api, browser, type JobDetail, type JobOutput, type LogLine } from "../api";
 import { CopyButton, ErrorBox, StatusBadge } from "../components";
-import { elapsed, plural } from "../format";
+import { elapsed, plural, remaining } from "../format";
 import { href } from "../router";
 import { viewLabel } from "./ReportPage";
 
 const POLL_MS = 700;
+
+/**
+ * The time left is estimated from how fast the step's count rose over this
+ * long: long enough to smooth one slow track, short enough to follow a step
+ * that speeds up (`duplicates` fingerprints the most-compared tracks first).
+ */
+const ETA_WINDOW_MS = 120_000;
+
+/** And not before this much of the step has been seen, so the first jump is not taken for a rate. */
+const ETA_MIN_SPAN_MS = 20_000;
 
 /**
  * One run: its live log, a cancel button, and links into what it wrote.
@@ -65,10 +75,12 @@ export function JobPage({ id, onChange }: { id: string; onChange: () => void }) 
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [chunks]);
 
+  const progress = job?.status === "running" ? lastProgress(chunks) : null;
+  const left = useRemaining(progress);
+
   if (error) return <ErrorBox error={error} />;
   if (!job) return <div className="muted">Loading…</div>;
 
-  const progress = job.status === "running" ? lastProgress(chunks) : null;
   const lineCount = chunks.reduce((n, c) => n + c.length, 0);
 
   return (
@@ -115,9 +127,17 @@ export function JobPage({ id, onChange }: { id: string; onChange: () => void }) 
       {progress && (
         <div className="progress" title={progress.text}>
           <div className="progress-bar" style={{ width: `${(100 * progress.done) / progress.total}%` }} />
-          <span>
+          <span className="progress-text">
             {progress.text} ({Math.floor((100 * progress.done) / progress.total)}%)
           </span>
+          {progress.done < progress.total && (
+            <span
+              className="progress-eta"
+              title="For this step of the run, from how fast it has gone over the last two minutes."
+            >
+              {left === null ? "estimating…" : remaining(left)}
+            </span>
+          )}
         </div>
       )}
 
@@ -195,12 +215,55 @@ function linkify(text: string): ReactNode {
   );
 }
 
+interface Progress {
+  done: number;
+  total: number;
+  text: string;
+}
+
+/**
+ * Seconds left in the current step, or null until there is a rate to go on.
+ *
+ * The log carries no times, so each new count is stamped when the page first
+ * sees it (within a poll of when it was printed). A step is one total: when
+ * the total changes (`duplicates` goes from reading tags to fingerprinting) or
+ * the count goes back, the estimate starts again. Between counts it counts
+ * down with the clock, which the page re-renders every second.
+ */
+function useRemaining(progress: Progress | null): number | null {
+  const history = useRef<{ total: number; points: { at: number; done: number }[] }>({ total: -1, points: [] });
+  const done = progress?.done;
+  const total = progress?.total;
+
+  useEffect(() => {
+    if (done === undefined || total === undefined) return;
+    const h = history.current;
+    const last = h.points[h.points.length - 1];
+    const now = Date.now();
+    if (total !== h.total || (last && done < last.done)) {
+      history.current = { total, points: [{ at: now, done }] };
+    } else if (!last || done > last.done) {
+      h.points.push({ at: now, done });
+      // The window's points, and the one before them as its start.
+      while (h.points.length > 2 && now - h.points[1].at > ETA_WINDOW_MS) h.points.shift();
+    }
+  }, [done, total]);
+
+  const h = history.current;
+  if (!progress || h.total !== progress.total || h.points.length < 2) return null;
+  const first = h.points[0];
+  const last = h.points[h.points.length - 1];
+  if (last.at - first.at < ETA_MIN_SPAN_MS) return null;
+  const perMs = (last.done - first.done) / (last.at - first.at);
+  return Math.max(0, ((progress.total - last.done) / perMs - (Date.now() - last.at)) / 1000);
+}
+
 /**
  * The most recent "N/M" in the log, as progress. The commands do not report
  * progress in a structured way, but those that know a total print it like
- * this (`fingerprint: 1250/64272 pair(s) compared`).
+ * this (`fingerprint: 250/3622 track(s) fingerprinted, …`).
  */
-function lastProgress(chunks: LogLine[][]): { done: number; total: number; text: string } | null {
+function lastProgress(chunks: LogLine[][]): Progress | null {
   for (let c = chunks.length - 1, seen = 0; c >= 0 && seen < 40; c--) {
     const chunk = chunks[c];
     for (let i = chunk.length - 1; i >= 0 && seen < 40; i--, seen++) {

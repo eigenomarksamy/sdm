@@ -56,6 +56,20 @@ export function clock(seconds: number | null | undefined, precise = false): stri
   return `${m}:${ss}`;
 }
 
+/**
+ * An estimate of time left, rounded so it reads as an estimate and does not
+ * tick: minutes up to an hour, then hours and 5-minute steps.
+ */
+export function remaining(seconds: number): string {
+  if (seconds < 45) return "less than a minute left";
+  if (seconds < 90) return "about a minute left";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `about ${minutes} min left`;
+  const hours = Math.floor(minutes / 60);
+  const rest = Math.round((minutes - hours * 60) / 5) * 5;
+  return rest ? `about ${hours} h ${rest} min left` : `about ${hours} h left`;
+}
+
 export function ago(epochSeconds: number): string {
   const diff = Date.now() / 1000 - epochSeconds;
   if (diff < 60) return "just now";

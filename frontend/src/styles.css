@@ -821,6 +821,22 @@ button.play.active {
   font-size: 0.82rem;
   font-family: var(--mono);
 }
+/* The step's own text gives way to the time left, which must stay readable. */
+.progress:has(.progress-eta) {
+  display: flex;
+}
+.progress .progress-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.progress .progress-eta {
+  flex: none;
+  color: var(--muted);
+  font-family: inherit;
+}
 
 /* --- modal ------------------------------------------------------------- */
 
