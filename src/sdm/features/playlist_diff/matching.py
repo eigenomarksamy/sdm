@@ -12,6 +12,11 @@ the file that nearly matched. A false "owned" is the expensive mistake — it
 hides a track you will then never go and buy — so anything short of a clean
 match stays visible.
 
+A fourth, `mismatch`, comes from outside this module: a file that matches by
+name but is not the track (a mix under its name, a preview clip, a damaged
+file). The caller passes a `vet` that says so — see `checks.py` — and this
+module only decides which candidate to believe.
+
 How the two sides are reconciled:
 
 - **Versions.** Spotify writes `Title - Extended Mix`, a Beatport-style tag
@@ -44,7 +49,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 #: Version words that name a release of a recording, not a different recording.
 #: "Title (Extended Mix)" and "Title - Radio Edit" are the same track for the
@@ -210,10 +215,14 @@ def _readings(track: LocalTrack) -> list[_Reading]:
 
 @dataclass(frozen=True)
 class Match:
-    status: str                  # "owned", "maybe" or "missing"
+    status: str                  # "owned", "maybe", "mismatch" or "missing"
     local: Optional[LocalTrack]  # the file that matched or nearly matched
     via: str = ""                # which reading of that file matched
-    note: str = ""               # for "maybe": why it is not "owned"
+    note: str = ""               # for "maybe" and "mismatch": why it is not "owned"
+
+
+#: Why a file that matched by name is not the track, or None if it can be. See `checks.py`.
+Vet = Callable[[LocalTrack], Optional[str]]
 
 
 class LocalIndex:
@@ -225,25 +234,54 @@ class LocalIndex:
             for reading in _readings(track):
                 self._by_base[reading.base].append(reading)
 
-    def match(self, title: str, artists: Iterable[str]) -> Match:
+    def match(self, title: str, artists: Iterable[str], vet: Optional[Vet] = None) -> Match:
+        """The best file for a playlist track. `vet` rules out files that only share its name.
+
+        Every file that matches by name is a candidate, and the first that
+        passes `vet` in each tier wins, so a mix saved under a track's name does
+        not hide the real file beside it. Only when every candidate fails is the
+        answer `mismatch`, naming the first that failed.
+        """
         base, versions = parse_title(title)
         wanted = artist_keys(artists)
 
-        other_version: Optional[_Reading] = None
-        unconfirmed: Optional[_Reading] = None
+        exact: list[_Reading] = []
+        other_version: list[_Reading] = []
+        unconfirmed: list[_Reading] = []
         for reading in self._by_base.get(base, ()):
             if not reading.artists or not wanted:
-                unconfirmed = unconfirmed or reading
+                unconfirmed.append(reading)
             elif reading.artists & wanted:
-                if reading.versions == versions:
-                    return Match("owned", reading.track, reading.via)
-                other_version = other_version or reading
+                (exact if reading.versions == versions else other_version).append(reading)
             # A same-titled file by someone else is a different song: no match.
 
-        if other_version is not None:
-            return Match("maybe", other_version.track, other_version.via,
-                         f"different version: have '{other_version.track.label}'")
-        if unconfirmed is not None:
-            return Match("maybe", unconfirmed.track, unconfirmed.via,
-                         f"title matches, no artist to confirm: '{unconfirmed.track.label}'")
+        rejected: list[tuple[_Reading, str]] = []
+
+        def first_sound(readings: list[_Reading]) -> Optional[_Reading]:
+            for reading in readings:
+                problem = vet(reading.track) if vet else None
+                if problem is None:
+                    return reading
+                if all(r.track != reading.track for r, _ in rejected):
+                    rejected.append((reading, problem))
+            return None
+
+        found = first_sound(exact)
+        if found is not None:
+            return Match("owned", found.track, found.via)
+        # A rejected exact match is worth a mention beside a "maybe": it is why
+        # the track is not simply owned.
+        also = "".join(f"; also '{r.track.label}': {problem}" for r, problem in rejected)
+
+        found = first_sound(other_version)
+        if found is not None:
+            return Match("maybe", found.track, found.via,
+                         f"different version: have '{found.track.label}'{also}")
+        found = first_sound(unconfirmed)
+        if found is not None:
+            return Match("maybe", found.track, found.via,
+                         f"title matches, no artist to confirm: '{found.track.label}'{also}")
+        if rejected:
+            reading, problem = rejected[0]
+            return Match("mismatch", reading.track, reading.via, problem)
         return Match("missing", None)

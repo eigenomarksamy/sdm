@@ -1,9 +1,11 @@
 """Runs the `sdm playlist-diff` subcommand.
 
-Load the playlist (API or CSV) -> read the folder's tags -> match -> report.
-The two reports are the answer and its evidence: `missing_<playlist>.csv` is
-what to go and get, and `matched_<playlist>.csv` names the file each "owned"
-track was matched to, so a wrong match can be caught rather than trusted.
+Load the playlist (API or CSV) -> read the folder's tags -> match, checking
+each file that matches by name (`checks.py`) -> report. The two reports are
+the answer and its evidence: `missing_<playlist>.csv` is what to go and get
+(and the files to replace, as `mismatch`), and `matched_<playlist>.csv` names
+the file each "owned" track was matched to, with both lengths, so a wrong
+match can be caught rather than trusted.
 """
 from __future__ import annotations
 
@@ -32,7 +34,8 @@ from sdm.core.spotify import (
 )
 from sdm.core.tags import read_title_artist_raw
 from sdm.core.track import iter_audio_files
-from sdm.features.playlist_diff.matching import LocalIndex, LocalTrack
+from sdm.features.playlist_diff.checks import FileFacts, clock, inspect, verdict
+from sdm.features.playlist_diff.matching import LocalIndex, LocalTrack, Match, Vet
 
 
 def run(args: argparse.Namespace) -> int:
@@ -70,7 +73,19 @@ def run(args: argparse.Namespace) -> int:
         LocalTrack(path, *read_title_artist_raw(path)[:2]) for path in files
     )
 
-    results = [(track, index.match(track.title, track.artists)) for track in playlist.tracks]
+    facts: dict[str, FileFacts] = {}
+
+    def file_facts(path: str) -> FileFacts:
+        # A file can be a candidate for several playlist tracks; read it once.
+        if path not in facts:
+            facts[path] = inspect(path)
+        return facts[path]
+
+    def vet_for(track: PlaylistTrack) -> Vet:
+        return lambda local: verdict(file_facts(local.path), track.duration_ms)
+
+    results = [(track, index.match(track.title, track.artists, vet_for(track)))
+               for track in playlist.tracks]
     absent = [(t, m) for t, m in results if m.status != "owned"]
     owned = [(t, m) for t, m in results if m.status == "owned"]
 
@@ -80,12 +95,18 @@ def run(args: argparse.Namespace) -> int:
             print(f"{'':<8} {match.note}")
 
     maybe = sum(1 for _, m in absent if m.status == "maybe")
+    mismatch = sum(1 for _, m in absent if m.status == "mismatch")
     print(
         f"{len(results)} track(s): {len(owned)} in the folder, "
-        f"{len(absent) - maybe} missing, {maybe} maybe (a different version, "
-        f"or a file with no artist tag)"
+        f"{len(absent) - maybe - mismatch} missing, {maybe} maybe (a different "
+        f"version, or a file with no artist tag), {mismatch} mismatch (a file "
+        f"by that name that is not the track: far too long or short, cut off, "
+        f"or unreadable)"
         + (f"; {playlist.skipped} skipped (episodes or unavailable)" if playlist.skipped else "")
     )
+
+    def local_duration(match: Match) -> str:
+        return clock(file_facts(match.local.path).duration_seconds) if match.local else ""
 
     report_dir = ensure_dir(args.output_dir) if args.output_dir else out_dir("playlist-diff")
     slug = playlist_slug(playlist.name)
@@ -95,19 +116,20 @@ def run(args: argparse.Namespace) -> int:
     write_csv(
         missing_path,
         ["#", "status", "artist", "title", "album", "duration", "isrc",
-         "spotify_url", "closest_local_file", "note"],
+         "spotify_url", "closest_local_file", "local_duration", "note"],
         (
             [i, m.status, ", ".join(t.artists), t.title, t.album,
              _duration(t.duration_ms), t.isrc, t.url,
-             m.local.path if m.local else "", m.note]
+             m.local.path if m.local else "", local_duration(m), m.note]
             for i, (t, m) in enumerate(absent, start=1)
         ),
     )
     write_csv(
         matched_path,
-        ["#", "artist", "title", "local_file", "matched_via"],
+        ["#", "artist", "title", "duration", "local_file", "local_duration", "matched_via"],
         (
-            [i, ", ".join(t.artists), t.title, m.local.path, m.via]
+            [i, ", ".join(t.artists), t.title, _duration(t.duration_ms),
+             m.local.path, local_duration(m), m.via]
             for i, (t, m) in enumerate(owned, start=1)
         ),
     )

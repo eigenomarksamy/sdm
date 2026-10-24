@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import statistics
 import sys
 import time
@@ -28,6 +27,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Callable, Iterable, Optional
 
+from sdm.core import tools
 from sdm.core.paths import resolve_output
 from sdm.core.rekordbox_db import RekordboxFile, load_files
 from sdm.core.report import write_csv
@@ -37,8 +37,9 @@ from sdm.features.quality.claims import RekordboxIndex
 from sdm.features.quality.compare import Flag, clip_rate_pct, flags
 from sdm.features.quality.measure import Decoders, Measurement, measure
 
-#: Print a progress line every this many files: often enough for `sdm web`'s
-#: bar to move, rarely enough that a library run is not thousands of lines.
+#: Print a progress line at most every this many files: often enough for
+#: `sdm web`'s bar to move, rarely enough that a library run is not thousands
+#: of lines. A run of under 2,500 files reports more often; see `run`.
 PROGRESS_EVERY = 25
 
 #: Grouped by aspect, measured value first and then the claims about it, so
@@ -105,7 +106,7 @@ def run(args: argparse.Namespace) -> int:
         print(f"error: not a directory: {directory}", file=sys.stderr)
         return 2
 
-    missing = [tool for tool in ("ffmpeg", "ffprobe") if shutil.which(tool) is None]
+    missing = [tool for tool in ("ffmpeg", "ffprobe") if not tools.available(tool)]
     if missing:
         print(f"error: {' and '.join(missing)} not found on PATH. Install ffmpeg "
               "(https://ffmpeg.org/download.html) and try again.", file=sys.stderr)
@@ -127,10 +128,15 @@ def run(args: argparse.Namespace) -> int:
     results: list[FileResult] = []
     started = time.monotonic()
 
+    # Every file for a small run, so a progress bar moves at all (a file is
+    # ~6 s in the browser build); at most every PROGRESS_EVERY for a library.
+    every = max(1, min(PROGRESS_EVERY, len(files) // 100))
+    print(f"  measured 0/{len(files)}")
+
     def collect(result: FileResult) -> None:
         # Nothing here prints a file name: see the failures below.
         results.append(result)
-        if len(results) % PROGRESS_EVERY == 0 or len(results) == len(files):
+        if len(results) % every == 0 or len(results) == len(files):
             print(f"  measured {len(results)}/{len(files)}")
 
     decoders = Decoders()
@@ -171,9 +177,10 @@ def _load_rekordbox(db_path: Optional[str]) -> Optional[RekordboxIndex]:
     """The database's claims, or None — with a line saying why — if it cannot be read."""
     source = db_path or "the local Rekordbox library"
     try:
-        rows = load_files(db_path)
-    except ImportError:
-        print('rekordbox: skipped - pyrekordbox is not installed (pip install -e ".[rekordbox]")')
+        rows = load_files(db_path, log=print)
+    except ImportError as exc:
+        # pyrekordbox, or pycryptodome where sqlcipher3 is missing too.
+        print(f'rekordbox: skipped - {exc.name or "pyrekordbox"} is not installed (pip install -e ".[rekordbox]")')
         return None
     except Exception as exc:
         print(f"rekordbox: skipped - could not read {source}: {exc}")
@@ -199,7 +206,15 @@ def _run_parallel(items: Iterable[str], fn: Callable[[str], FileResult], jobs: i
     Only `2 * jobs` are queued at a time, and if anything interrupts the loop —
     Ctrl-C, a cancel, an error — `on_abort` runs before the pool is waited for,
     so the threads still busy end now rather than after their file.
+
+    One job runs on the calling thread instead, with no pool: the browser build
+    has no threads to start (Pyodide), and there a cancel interrupts the decode
+    itself, so nothing is left to abort.
     """
+    if jobs == 1:
+        for item in items:
+            collect(fn(item))
+        return
     pending = iter(items)
     pool = ThreadPoolExecutor(max_workers=jobs)
     running: set[Future] = set()

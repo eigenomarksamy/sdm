@@ -518,7 +518,7 @@ export const browser: BrowserHooks = {
     if (!files?.length) return null;
     const current = python;
     await current.ready;
-    const path = await current.send<string>({ type: "csv", name: mountName(files[0].name), file: files[0] });
+    const path = await current.send<string>({ type: "file", name: mountName(files[0].name), file: files[0] });
     return { path, summary: files[0].name };
   },
 

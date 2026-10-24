@@ -21,15 +21,26 @@ export function Home({ commands, jobs, session }: { commands: Command[]; jobs: J
           <>
             <PrivacyNote />
             <p className="muted">
-              Not in the browser:{" "}
-              {browser.offline().map((name, i) => (
-                <span key={name}>
-                  {i > 0 && ", "}
-                  <code>{name}</code>
-                </span>
-              ))}
-              . They need fpcalc or ffmpeg, so they run with sdm on your own machine. A Spotify playlist link needs a
-              login with a client ID of your own: <a href={href("/spotify")}>Spotify setup</a>.
+              {browser.offline().length > 0 && (
+                <>
+                  Not in the browser:{" "}
+                  {browser.offline().map((name, i) => (
+                    <span key={name}>
+                      {i > 0 && ", "}
+                      <code>{name}</code>
+                    </span>
+                  ))}
+                  {" "}— run with sdm on your own machine.{" "}
+                </>
+              )}
+              {!browser.offline().includes("quality") && (
+                <>
+                  Commands that decode audio (<code>duplicates</code>, <code>quality</code>) are slower here than on your
+                  own machine, and <code>quality</code> measures a sample per run.{" "}
+                </>
+              )}
+              A Spotify playlist link needs a login with a client ID of your own:{" "}
+              <a href={href("/spotify")}>Spotify setup</a>.
             </p>
           </>
         ) : (

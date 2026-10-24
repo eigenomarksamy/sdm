@@ -8,7 +8,8 @@
 # static files. The two Spotify hosts serve the playlist commands: the page
 # logs in at accounts.spotify.com, and it and the Python worker read
 # api.spotify.com with read-only scopes. Nothing else is reachable.
-# 'wasm-unsafe-eval' lets Pyodide compile its WebAssembly, and nothing else.
+# 'wasm-unsafe-eval' lets Pyodide and the audio tools (tools/) compile their
+# WebAssembly, and nothing else.
 # media-src blob: is the player, which plays picked files by blob URL. The
 # login itself is a top-level navigation to Spotify, which CSP does not govern.
 #
@@ -24,9 +25,12 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
 
-# Content-hashed by Vite, and a pinned Pyodide release under its own version:
-# both change name when they change, so browsers may keep them.
+# Content-hashed by Vite, a pinned Pyodide release under its own version, and
+# the audio tools under their own hash: all change name when they change, so
+# browsers may keep them.
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 /pyodide/*
+  Cache-Control: public, max-age=31536000, immutable
+/tools/*
   Cache-Control: public, max-age=31536000, immutable

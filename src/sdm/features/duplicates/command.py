@@ -37,7 +37,7 @@ def run(args: argparse.Namespace) -> int:
         print("no audio files found")
         return 0
 
-    tracks = tracks_from_files(files)
+    tracks = tracks_from_files(files, log=print)
     print(f"read {len(tracks)} track(s) from {len(files)} audio file(s)")
 
     config = DetectionConfig(

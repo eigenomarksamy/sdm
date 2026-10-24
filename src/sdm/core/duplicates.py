@@ -34,6 +34,13 @@ from sdm.core.grouping import UnionFind
 from sdm.core.text import normalize_simple as _normalize
 from sdm.core.track import Track
 
+#: A progress line per this many tracks fingerprinted: every ~4 s natively,
+#: ~10 s in the browser build. The reference library is ~140 lines.
+FINGERPRINT_PROGRESS_EVERY = 25
+
+#: And once every track is fingerprinted, per this many pairs still compared.
+PAIR_PROGRESS_EVERY = 2000
+
 
 @dataclass
 class DuplicateGroup:
@@ -209,6 +216,13 @@ def _confirm_with_fingerprints(
     # One fingerprint per track, not per pair: a track in a crowded bucket is
     # compared against many others, and fingerprinting is the expensive step.
     cache: dict[str, Optional[Fingerprint]] = {}
+    # Progress counts tracks fingerprinted, the step that takes the time (a
+    # pair is compared in well under a millisecond), so a front end's bar keeps
+    # pace with the clock: its first "N/M" is what `sdm web` draws. Tracks stay
+    # first after the last one too, so the bar never runs backwards while the
+    # remaining pairs are compared.
+    needed = len({t.id for pair in pairs for t in pair})
+    reported = 0
 
     def get(t: Track) -> Optional[Fingerprint]:
         if t.id not in cache:
@@ -219,13 +233,15 @@ def _confirm_with_fingerprints(
     for i, (a, b) in enumerate(pairs, start=1):
         fa = get(a)
         fb = get(b)
+        if len(cache) - reported >= FINGERPRINT_PROGRESS_EVERY or (
+                len(cache) == needed and i % PAIR_PROGRESS_EVERY == 0):
+            reported = len(cache)
+            log(f"fingerprint: {reported}/{needed} track(s) fingerprinted, {i}/{len(pairs)} pair(s) compared")
         if fa is None or fb is None:
             continue
         score = similarity(fa, fb)
         if score >= threshold:
             confirmed.append((a, b))
-        if i % 25 == 0:
-            log(f"fingerprint: {i}/{len(pairs)} pair(s) compared")
 
     # A track that could not be fingerprinted is silently unmatchable, which
     # looks exactly like a clean library. Say how many, so it can't hide.

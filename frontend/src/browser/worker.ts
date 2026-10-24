@@ -14,6 +14,8 @@ import type { JobOutput } from "../api";
 import { keepForMount, mountName, ntfsCompare } from "./files";
 import { CANCEL_JOB, SIGNAL } from "./protocol";
 import type { BootInfo, FromWorker, Manifest, MountedFolder, OutFile, RunLogin, RunResult, Staged, ToWorker } from "./protocol";
+import { loadTool, runTool } from "./tools";
+import type { Tool, ToolFs, ToolResult } from "./tools";
 
 /**
  * Bytes per cached block when a picked file is read, and blocks kept per open
@@ -30,6 +32,14 @@ import type { BootInfo, FromWorker, Manifest, MountedFolder, OutFile, RunLogin, 
  */
 const BLOCK_SIZE = 64 * 1024;
 const KEEP_BLOCKS = 4;
+
+/**
+ * The same cache for the audio tools (tools.ts), which read a file front to
+ * back in ffmpeg's 32 KiB pieces: a few large blocks turn ~500 round trips per
+ * track into ~15.
+ */
+const TOOL_BLOCK_SIZE = 1024 * 1024;
+const TOOL_KEEP_BLOCKS = 2;
 
 declare const FileReaderSync: { new (): { readAsArrayBuffer(blob: Blob): ArrayBuffer } };
 
@@ -59,7 +69,7 @@ interface EmFs {
   readdir(path: string): string[];
   stat(path: string): Stat;
   isDir(mode: number): boolean;
-  analyzePath(path: string): { exists: boolean };
+  analyzePath(path: string): { exists: boolean; object?: { mode: number; contents: unknown } | null };
   readFile(path: string): Uint8Array;
   writeFile(path: string, data: Uint8Array): void;
   utime(path: string, atime: number, mtime: number): void;
@@ -118,6 +128,7 @@ async function dispatch(message: ToWorker): Promise<[unknown, Transferable[]]> {
     case "call":
       return [call(message.name, message.args), []];
     case "run": {
+      await loadPackagesFor(message.job, message.command);
       const result = run(message.job, message.command, message.argv, message.spotify);
       return [result, result.changed.map((f) => f.data)];
     }
@@ -129,8 +140,8 @@ async function dispatch(message: ToWorker): Promise<[unknown, Transferable[]]> {
       staged = [];
       return [mount(mountName(message.name), files), []];
     }
-    case "csv":
-      return [await writeCsv(message.name, message.file), []];
+    case "file":
+      return [await writePicked(message.name, message.file), []];
     case "restore":
       for (const file of message.files) await restore(file.path, file.mtime, file.data);
       return [message.files.length, []];
@@ -166,8 +177,11 @@ async function boot(base: string, blockSize: number | null): Promise<BootInfo> {
 
   step = "Starting sdm";
   report();
+  // What `sdm.browser._run_tool` imports: Python's way to the audio tools.
+  py.registerJsModule("sdm_tools", { run: runToolForPython });
   python = py.pyimport("sdm.browser").call;
-  info = call<BootInfo>("boot", {});
+  info = call<BootInfo>("boot", { with_tools: manifest.tools !== null });
+  toolsUrl = manifest.tools === null ? "" : new URL(manifest.tools, base).href;
   patchWorkerFs(blockSize ?? BLOCK_SIZE);
   // After boot, which installs the handler that keeps a cancel inside a run.
   if (control) py.setInterruptBuffer(control);
@@ -220,6 +234,62 @@ function line(stream: "out" | "err", text: string): void {
 }
 
 // --- runs -------------------------------------------------------------------------
+
+/** Pyodide packages installed so far beyond the boot set. */
+const installed = new Set<string>();
+/** Audio tools compiled so far (tools.ts), by the name `core.tools` runs them by. */
+const tools = new Map<string, Tool>();
+let toolsUrl = "";
+
+/**
+ * Install what `command` needs beyond the boot set before its first run in
+ * this worker: Pyodide packages (`sdm.browser.COMMAND_PACKAGES`) and audio
+ * tools (`COMMAND_TOOLS`). Kept out of the boot, so a visitor who never runs
+ * the command never downloads them.
+ */
+async function loadPackagesFor(id: string, command: string): Promise<void> {
+  const packages = (info.command_packages[command] ?? []).filter((name) => !installed.has(name));
+  // A build without tools has none to load: a command that tries one is told it is missing.
+  const missing = toolsUrl ? (info.command_tools[command] ?? []).filter((name) => !tools.has(name)) : [];
+  if (!packages.length && !missing.length) return;
+  post({ type: "line", job: id, stream: "out", text: `installing ${[...packages, ...missing].join(", ")} for sdm ${command} (once per tab)` });
+  await Promise.all([
+    packages.length ? py.loadPackage(packages, { messageCallback: () => undefined }) : null,
+    ...missing.map(async (name) => tools.set(name, await loadTool(toolsUrl, name))),
+  ]);
+  for (const name of packages) installed.add(name);
+}
+
+/**
+ * `sdm_tools.run`, as `sdm.browser._run_tool` calls it: a fresh instance of
+ * the tool, given every picked file its argv names. Null for a tool this
+ * command did not load, which Python reports as a missing program.
+ */
+function runToolForPython(name: string, args: string[], sink?: (chunk: Uint8Array) => void): ToolResult | null {
+  const tool = tools.get(name);
+  return tool ? runTool(tool, args, sink ?? null, providePicked) : null;
+}
+
+/**
+ * Put Python's file at `path` into a tool instance's filesystem, at the same
+ * path. A picked folder's file is the browser's own File, mounted rather than
+ * copied; a picked single file (a master.db) was copied into Python and is
+ * copied again. Anything else - an option's value - is not a file and is left.
+ */
+function providePicked(tool: ToolFs, path: string): void {
+  const found = fs.analyzePath(path);
+  if (!found.exists || !found.object || fs.isDir(found.object.mode)) return;
+  const dir = path.slice(0, path.lastIndexOf("/")) || "/";
+  tool.mkdirTree(dir);
+  const contents = found.object.contents;
+  if (contents instanceof Blob) {
+    const workerfs = tool.filesystems.WORKERFS as WorkerFs;
+    cacheReads(workerfs, TOOL_BLOCK_SIZE, TOOL_KEEP_BLOCKS);
+    tool.mount(workerfs, { blobs: [{ name: path.slice(dir.length + 1), data: contents }] }, dir);
+  } else {
+    tool.writeFile(path, fs.readFile(path));
+  }
+}
 
 /**
  * Run one command. A cancelled run leaves the output root exactly as it found
@@ -368,9 +438,10 @@ function mount(name: string, files: Staged[]): MountedFolder {
   return { path, files: files.length, audio, analysis: files.length - audio };
 }
 
-async function writeCsv(name: string, file: File): Promise<string> {
-  const path = `${info.playlist_root}/${name.replace(/[\\/]/g, "_")}`;
-  fs.mkdirTree(info.playlist_root);
+/** A single picked file (a playlist CSV, a master.db), copied in: a pick of one file is no folder to mount. */
+async function writePicked(name: string, file: File): Promise<string> {
+  const path = `${info.picked_root}/${name.replace(/[\\/]/g, "_")}`;
+  fs.mkdirTree(info.picked_root);
   fs.writeFile(path, new Uint8Array(await file.arrayBuffer()));
   return path;
 }
@@ -390,7 +461,11 @@ async function writeCsv(name: string, file: File): Promise<string> {
 function patchWorkerFs(blockSize: number): void {
   const workerfs = fs.filesystems.WORKERFS;
   workerfs.node_ops.readdir = (node) => [".", "..", ...Object.keys(node.contents).sort(ntfsCompare)];
+  cacheReads(workerfs, blockSize, KEEP_BLOCKS);
+}
 
+/** WORKERFS's `read` through `keep` cached blocks per open file; see BLOCK_SIZE. */
+function cacheReads(workerfs: WorkerFs, blockSize: number, keep: number): void {
   const reader = new FileReaderSync();
   const slice = (blob: Blob, start: number, end: number) => {
     const t = performance.now();
@@ -440,7 +515,7 @@ function patchWorkerFs(blockSize: number): void {
       buffer.set(block.subarray(from, to), offset + written);
       written += to - from;
     }
-    while (blocks.size > KEEP_BLOCKS) blocks.delete(blocks.keys().next().value!);
+    while (blocks.size > keep) blocks.delete(blocks.keys().next().value!);
     return written;
   };
 }

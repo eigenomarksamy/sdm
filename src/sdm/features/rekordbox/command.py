@@ -53,12 +53,17 @@ def run(args: argparse.Namespace) -> int:
         def fingerprint_fn(t: Track) -> Optional[Fingerprint]:
             return compute_fingerprint(t.file_path, fpcalc_path=args.fpcalc_path)
 
-        groups = find_duplicates(
-            tracks,
-            config,
-            fingerprint_fn=None if config.skip_fingerprint else fingerprint_fn,
-            progress=lambda msg: print(msg),
-        )
+        try:
+            groups = find_duplicates(
+                tracks,
+                config,
+                fingerprint_fn=None if config.skip_fingerprint else fingerprint_fn,
+                progress=lambda msg: print(msg),
+            )
+        except RuntimeError as exc:
+            # No fpcalc: a message, as `sdm duplicates` gives, not a traceback.
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
     print(f"found {len(groups)} duplicate group(s)")
 

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from sdm.core.track import Track
 
@@ -282,12 +282,19 @@ def _replaygain(tags) -> Optional[float]:
     return float(match.group()) if match else None
 
 
-def tracks_from_files(files: list[str], *, start_idx: int = 0) -> list[Track]:
+#: `tracks_from_files` reports every this many files: a library is ~15 lines.
+TAG_PROGRESS_EVERY = 250
+
+
+def tracks_from_files(files: list[str], *, start_idx: int = 0,
+                      log: Optional[Callable[[str], None]] = None) -> list[Track]:
     """Build `Track` objects for the given audio files from their embedded tags.
 
     Files whose duration cannot be determined are skipped, since duration is
     what the duplicate prefilter keys on. Ids are sequential from `start_idx`,
-    so callers merging several sources pass the running count.
+    so callers merging several sources pass the running count. `log` gets a
+    "reading tags: N/M" line every `TAG_PROGRESS_EVERY` files, for a progress
+    bar: in the browser build a library's tags take a minute.
     """
     try:
         from mutagen import File
@@ -296,8 +303,10 @@ def tracks_from_files(files: list[str], *, start_idx: int = 0) -> list[Track]:
 
     tracks: list[Track] = []
     idx = start_idx
-    for filepath in files:
+    for done, filepath in enumerate(files, start=1):
         idx += 1
+        if log and (done % TAG_PROGRESS_EVERY == 0 or done == len(files)):
+            log(f"reading tags: {done}/{len(files)} file(s)")
         title = "Unknown"
         artist = "Unknown"
         bpm = None

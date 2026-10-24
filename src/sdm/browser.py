@@ -25,11 +25,28 @@ processes, and each reason is answered another way here:
     does not stop in time, gets the old cancel instead: the page terminates the
     worker and starts another.
 
-**What runs here.** `ONLINE_COMMANDS`, and the reason each other command does
-not is a missing piece of the machine, not of the browser build: `duplicates`
-and `rekordbox` fingerprint through the `fpcalc` binary, `quality` through
-ffmpeg. Their code is not removed from the wheel, only left off the forms;
-`prepare` refuses them by name.
+**What runs here.** Every command but the deprecated `download`
+(`ONLINE_COMMANDS`; `prepare` refuses anything else by name). Two kinds of
+piece were missing, and each is supplied without changing a command:
+
+  - Native programs. fpcalc, ffprobe and ffmpeg run as WebAssembly builds
+    (`wasm/build.sh`) that the worker instantiates afresh for every run, as a
+    process would start, through `core.tools.runner` (`_run_tool`). Same argv,
+    same output. Each is loaded with the first command that needs it
+    (`COMMAND_TOOLS`).
+  - sqlcipher3, for `master.db`. `core.rekordbox_db` decrypts a copy instead
+    (`core.sqlcipher`), with pycryptodome and SQLAlchemy loaded for the
+    commands that read one (`COMMAND_PACKAGES`). pyrekordbox's `psutil`, which
+    it uses only to ask whether Rekordbox is running, is stubbed: a tab has no
+    processes to ask about (`_shim_pyrekordbox`).
+
+A build made `--without-tools` (where Emscripten is not to hand) has none of
+the programs: the commands that cannot run without them (`NEEDS_TOOLS`) are
+then offline, as before, and `rekordbox` cannot fingerprint.
+
+What a tab cannot do is be fast: no threads, and decoders without the CPU's
+vector instructions. `quality` is therefore capped at `QUALITY_LIMIT` tracks a
+run, and measures one file at a time.
 
 **Spotify** (`playlist-export`, and `playlist-diff` given a link) logs in from
 the page, not from here. The CLI's login waits on a loopback server for
@@ -48,6 +65,7 @@ import http.client
 import importlib.util
 import io
 import json
+import logging
 import os
 import signal
 import sys
@@ -60,13 +78,44 @@ from typing import Any, Callable, Iterator, Optional
 from sdm.web import reports, schema
 
 #: The commands offered in the browser. See the module docstring for the rest.
-ONLINE_COMMANDS = ("catalog", "analyze", "playlist-diff", "playlist-export")
+ONLINE_COMMANDS = ("catalog", "duplicates", "rekordbox", "analyze", "quality",
+                   "playlist-diff", "playlist-export")
+
+#: Pyodide packages a command needs beyond the boot set, loaded by the worker
+#: before its first run, transitive dependencies included. `build_browser.py`
+#: reads this to know what to ship, so the two cannot disagree.
+COMMAND_PACKAGES = {
+    # pyrekordbox's database layer, and decrypting master.db for it. `quality`
+    # reads Rekordbox's claims from a picked master.db the same way.
+    "rekordbox": ("sqlalchemy", "python-dateutil", "pycryptodome"),
+    "quality": ("sqlalchemy", "python-dateutil", "pycryptodome"),
+}
+
+#: The WebAssembly programs a command runs (`wasm/build.sh`), loaded with it.
+#: `build_browser.py` ships every one named here.
+COMMAND_TOOLS = {
+    "duplicates": ("fpcalc",),
+    "rekordbox": ("fpcalc",),
+    "quality": ("ffprobe", "ffmpeg"),
+}
+
+#: Commands that cannot run at all without those tools.
+NEEDS_TOOLS = ("duplicates", "quality")
+
+#: Tracks `quality` measures per run here. ~2 s of ffmpeg each natively, more
+#: in a tab, one at a time: 100 is minutes, a library would be hours.
+QUALITY_LIMIT = 100
+
+#: Values a tab sets whatever the form says: one `quality` job, since there are
+#: no threads to run more on.
+FORCED_VALUES = {"quality": {"jobs": 1}}
 
 #: Fields that mean nothing in a tab. Output locations: every report goes to
 #: `OUT_ROOT`, the only place the page lists. The Spotify client ID and the
 #: login browser: the page logs in itself, from one box above both playlist
 #: commands' forms, and hands the run its login (see `run`).
-HIDDEN_FIELDS = frozenset({"output_dir", "output_csv", "client_id", "no_browser"})
+HIDDEN_FIELDS = frozenset({"output_dir", "output_csv", "client_id", "no_browser",
+                           "fpcalc_path", "no_fetch_fpcalc", "jobs"})
 
 #: playlist-diff's positional: the page gives the box a CSV picker, and a link
 #: can be pasted into the same box.
@@ -77,9 +126,13 @@ PLAYLIST_HELP = ("A Spotify playlist link - log in to Spotify above first - or "
 OUT_ROOT = "/out"
 TMP_ROOT = "/tmp"
 
-#: Where the worker mounts what the visitor picks. Read by the page too.
+#: Where the worker mounts what the visitor picks: folders, and single files
+#: (a playlist CSV, a master.db), which are copied in. Read by the page too.
 MUSIC_ROOT = "/music"
-PLAYLIST_ROOT = "/playlist"
+PICKED_ROOT = "/picked"
+
+#: The commands this build runs: `ONLINE_COMMANDS`, less `NEEDS_TOOLS` without tools. Set by `boot`.
+_online: tuple[str, ...] = ONLINE_COMMANDS
 
 #: Every path a run reported writing, for `reports.resolve`'s allow-list.
 _written: set[str] = set()
@@ -114,24 +167,36 @@ def call(name: str, args_json: str) -> str:
         return _error(500, f"internal error: {exc}")
 
 
-def boot() -> dict:
-    """Ready the interpreter: shim pyrekordbox, set the roots, import the CLI."""
+def boot(with_tools: bool = True) -> dict:
+    """Ready the interpreter: shim pyrekordbox, set the roots, import the CLI.
+
+    `with_tools`: whether this build has the audio tools; see the module docstring.
+    """
+    global _online
+    _online = tuple(c for c in ONLINE_COMMANDS if with_tools or c not in NEEDS_TOOLS)
     _shim_pyrekordbox()
     from sdm import __version__, cli  # noqa: F401 - imports every add_parser
-    from sdm.core import paths, spotify
+    from sdm.core import paths, spotify, tools
     from sdm.core.anlz import USBANLZ_SUBDIR
     from sdm.core.track import AUDIO_EXTS
 
     paths.configure(OUT_ROOT, TMP_ROOT)
     spotify.transport = _xhr
-    for root in (OUT_ROOT, TMP_ROOT, MUSIC_ROOT, PLAYLIST_ROOT):
+    tools.runner = _run_tool
+    # pyrekordbox warns that it does not know emscripten when it looks for a
+    # Rekordbox install, and that a picked master.db has no playlists file
+    # beside it. Both are true and neither matters to a run.
+    logging.getLogger("pyrekordbox").setLevel(logging.ERROR)
+    for root in (OUT_ROOT, TMP_ROOT, MUSIC_ROOT, PICKED_ROOT):
         os.makedirs(root, exist_ok=True)
     signal.signal(signal.SIGINT, _on_cancel)
     return {
         "version": __version__,
         "out_root": OUT_ROOT,
         "music_root": MUSIC_ROOT,
-        "playlist_root": PLAYLIST_ROOT,
+        "picked_root": PICKED_ROOT,
+        "command_packages": {name: list(packages) for name, packages in COMMAND_PACKAGES.items()},
+        "command_tools": {name: list(names) for name, names in COMMAND_TOOLS.items()},
         # What a picked folder is filtered down to before it is mounted. From
         # core, so the page's filter cannot drift from what the commands read.
         "mount": {
@@ -140,7 +205,7 @@ def boot() -> dict:
         },
         "commands": commands(),
         # Named on the page, so it can say what needs sdm on a real machine.
-        "offline": [c["name"] for c in schema.commands() if c["name"] not in ONLINE_COMMANDS],
+        "offline": [c["name"] for c in schema.commands() if c["name"] not in _online],
         # What the page's login asks Spotify for: the CLI's read-only scopes, not a copy.
         "spotify_scopes": spotify.SCOPES,
     }
@@ -150,7 +215,7 @@ def commands() -> list[dict]:
     """`schema.commands()`, cut down to what runs in a tab."""
     online = []
     for spec in schema.commands():
-        if spec["name"] not in ONLINE_COMMANDS:
+        if spec["name"] not in _online:
             continue
         fields = []
         for field in spec["fields"]:
@@ -160,6 +225,11 @@ def commands() -> list[dict]:
                 # schema gives every playlist box a CSV picker; only playlist-diff reads a CSV.
                 field = ({**field, "help": PLAYLIST_HELP} if spec["name"] == "playlist-diff"
                          else {**field, "path": None, "accept": []})
+            elif spec["name"] == "quality" and field["dest"] == "limit":
+                field = {**field, "default": QUALITY_LIMIT, "help":
+                         f"Measure the first N files, at most {QUALITY_LIMIT} in a browser tab, "
+                         "where each takes several seconds. For a whole library, run sdm "
+                         "quality on your own machine."}
             fields.append(field)
         online.append({**spec, "fields": fields})
     return online
@@ -170,7 +240,7 @@ def prepare(command: str, values: Any, spotify: bool = False) -> dict:
 
     `spotify` is whether the page has a Spotify login to hand the run.
     """
-    if command not in ONLINE_COMMANDS:
+    if command not in _online:
         raise schema.InvalidRequest(
             f"sdm {command} does not run in a browser - use sdm on your own machine")
     if not isinstance(values, dict):
@@ -179,6 +249,9 @@ def prepare(command: str, values: Any, spotify: bool = False) -> dict:
     visible = {field["dest"]: field for field in spec["fields"]}
     values = {dest: value for dest, value in values.items() if dest in visible}
     _check_paths(visible, values, spotify)
+    if command == "quality":
+        values["limit"] = _quality_limit(values.get("limit"))
+    values.update(FORCED_VALUES.get(command, {}))
     invocation = schema.build(command, values)
     return {"argv": invocation.argv, "display": invocation.display}
 
@@ -261,6 +334,21 @@ _API: dict[str, Callable[..., Any]] = {
 # --- internals ---------------------------------------------------------------
 
 
+def _quality_limit(value: Any) -> int:
+    """`quality`'s --limit, at most `QUALITY_LIMIT`; empty means the most."""
+    if value in (None, "", 0, "0"):
+        return QUALITY_LIMIT
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        raise schema.InvalidRequest("--limit: a whole number of files") from None
+    if limit > QUALITY_LIMIT or limit < 1:
+        raise schema.InvalidRequest(
+            f"--limit: between 1 and {QUALITY_LIMIT} in a browser tab, where each file takes "
+            "several seconds. Run sdm quality on your own machine for a whole library.")
+    return limit
+
+
 def _check_paths(fields: dict[str, dict], values: dict, logged_in: bool) -> None:
     """Refuse a path the tab cannot read, with a message that says what to do.
 
@@ -296,6 +384,16 @@ def _check_paths(fields: dict[str, dict], values: dict, logged_in: bool) -> None
             raise schema.InvalidRequest(
                 f"{field['label']}: {value} is not a folder picked in this tab. "
                 "Choose it again - picks do not survive a reload.")
+        elif field["path"] == "file" and not os.path.isfile(value):
+            raise schema.InvalidRequest(
+                f"{field['label']}: {value} is not a file picked in this tab. "
+                "Choose it again - picks do not survive a reload.")
+        elif dest == "export_csv" and ("/" in value or "\\" in value):
+            # resolve_output takes a path with a folder verbatim, and the only
+            # folder a report can go to here is the page's report list.
+            raise schema.InvalidRequest(
+                f"{field['label']}: give a file name only, or leave it empty - "
+                "reports are listed on this page.")
 
 
 @contextlib.contextmanager
@@ -353,6 +451,28 @@ def _xhr(request: urllib.request.Request) -> bytes:
     return response.content
 
 
+def _run_tool(argv: list[str], on_stdout: Optional[Callable[[bytes], None]]) -> Any:
+    """`core.tools.runner` in a tab: one fresh WebAssembly instance per run.
+
+    `sdm_tools` is the worker's (`frontend/src/browser/tools.ts`), registered
+    at boot. The tool reads the same paths Python does: the worker gives each
+    instance the picked files its argv names. stdout comes back through
+    `on_stdout` while the tool runs, so a cancel lands inside a decode: the
+    callback is Python, and Python is what the page interrupts.
+    """
+    import sdm_tools  # type: ignore[import-not-found]  # registered by worker.ts
+    from pyodide.ffi import to_js
+
+    from sdm.core import tools
+
+    name = os.path.splitext(os.path.basename(argv[0]))[0]
+    sink = (lambda chunk: on_stdout(chunk.to_bytes())) if on_stdout else None
+    result = sdm_tools.run(name, to_js(argv[1:]), sink)
+    if result is None:
+        raise FileNotFoundError(f"{name} is not loaded in this tab")
+    return tools.Completed(int(result.code), result.stdout.to_bytes(), result.stderr.to_bytes())
+
+
 def _on_cancel(signum: int, frame: Any) -> None:
     """SIGINT, which only the page's Cancel sends: interrupt the command, once.
 
@@ -370,16 +490,28 @@ def _on_cancel(signum: int, frame: Any) -> None:
 
 
 def _shim_pyrekordbox() -> None:
-    """Let `import pyrekordbox.anlz` skip `pyrekordbox/__init__.py`.
+    """Let `import pyrekordbox.anlz` skip `pyrekordbox/__init__.py`, and stub psutil.
 
     That `__init__` re-exports the whole package, database layer included, so
-    importing it pulls in sqlalchemy and sqlcipher3 — a C extension with no
-    Pyodide build. `core.anlz` needs only `pyrekordbox.anlz`, which imports
+    importing it pulls in SQLAlchemy and more on every `analyze` run, which
+    needs none of it. `core.anlz` needs only `pyrekordbox.anlz`, which imports
     nothing from its parent (construct and numpy only). A bare module carrying
     the package's `__path__` stands in for the parent: the submodule is found
-    and the parent's `__init__` never runs. Browser-only; a normal install has
-    the dependencies and imports pyrekordbox the ordinary way.
+    and the parent's `__init__` never runs. `core.rekordbox_db` imports
+    `pyrekordbox.db6.database` by its full name for the same reason.
+
+    The database layer imports `psutil`, which has no Pyodide build, for one
+    thing: `get_rekordbox_pid`, a warning when Rekordbox is running. In a tab
+    no process is, so the stub lists none. Only installed when psutil is
+    missing. Browser-only; a normal install imports pyrekordbox the ordinary way.
     """
+    if importlib.util.find_spec("psutil") is None and "psutil" not in sys.modules:
+        psutil = types.ModuleType("psutil")
+        psutil.process_iter = lambda *args, **kwargs: iter(())
+        psutil.Error = type("Error", (Exception,), {})
+        psutil.AccessDenied = type("AccessDenied", (psutil.Error,), {})
+        psutil.NoSuchProcess = type("NoSuchProcess", (psutil.Error,), {})
+        sys.modules["psutil"] = psutil
     if "pyrekordbox" in sys.modules:
         return
     spec = importlib.util.find_spec("pyrekordbox")  # finds the package, runs nothing

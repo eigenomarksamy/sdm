@@ -16,9 +16,9 @@ sdm catalog  sdm duplicates  sdm rekordbox  sdm analyze  sdm quality
 
 sdm download — deprecated, not registered (features/spotify)
 sdm web      — a front end over all of the above, beside cli.py (sdm.web)
-browser      — a third front end: catalog, analyze, playlist-diff, playlist-export
-               running in a browser tab via Pyodide, at sdm.eigenomar.com
-               (sdm.browser)
+browser      — a third front end: every command running in a browser tab via
+               Pyodide, at sdm.eigenomar.com (sdm.browser); fpcalc, ffprobe and
+               ffmpeg as WebAssembly (wasm/)
 ```
 
 **`sdm download` is switched off.** `spotify` is not in `FEATURES` in `cli.py`,
@@ -48,8 +48,9 @@ parked, not condemned.
 | `src/sdm/web/static/` | The built page. Gitignored, written by `npm run build` in `frontend/` |
 | `frontend/` | The page's source: React 19 + TypeScript 7 + Vite 8. `package-lock.json` is committed, `node_modules/` is not |
 | `src/sdm/browser.py` | The browser build's Python half. **A front end like `cli.py` and `sdm.web`, not a feature**; imports no feature |
-| `frontend/src/browser/` | The browser build's page side: the API swapped in for `src/api.ts`, the Pyodide worker, the Spotify login, `_headers` |
-| `build_browser.py` | Builds the browser version into `dist/` (gitignored): page, self-hosted Pyodide, wheels |
+| `frontend/src/browser/` | The browser build's page side: the API swapped in for `src/api.ts`, the Pyodide worker, the audio tools' runner (`tools.ts`), the Spotify login, `_headers` |
+| `wasm/` | The browser build's audio tools: `build.sh` (Linux/WSL only) builds fpcalc, ffprobe and `sdm_ffmpeg.c` as WebAssembly into `build/wasm-tools/` (gitignored) |
+| `build_browser.py` | Builds the browser version into `dist/` (gitignored): page, self-hosted Pyodide, wheels, and `build/wasm-tools/`'s modules |
 | `wrangler.jsonc` | Cloudflare Workers config serving `dist/` at sdm.eigenomar.com. `.wrangler/` is its gitignored state |
 | `docs/rekordbox.md` | Detailed Rekordbox reference |
 | `docs/analyze.md` | Detailed ANLZ / phrase-analysis reference |
@@ -104,7 +105,8 @@ sdm playlist-export "<spotify playlist link>"            # -> out/playlist-expor
 cd frontend; npm install; npm run build   # builds the page into src/sdm/web/static/
 sdm web                                   # http://127.0.0.1:8770, opens the browser
 
-python build_browser.py                   # the browser build -> dist/ (npm ci, Pyodide, wheels)
+wsl bash wasm/build.sh                    # the audio tools as WebAssembly -> build/wasm-tools/ (~5 min once)
+python build_browser.py                   # the browser build -> dist/ (npm ci, Pyodide, wheels, tools)
 python build_browser.py --no-install      # same, skipping npm ci
 npx wrangler dev                          # serves dist/ with _headers, http://127.0.0.1:8787
 ```
@@ -200,6 +202,35 @@ identical inputs.
   and is read as None. Those claims are not always right: 54 rows of the
   reference library list a ~130 kbps VBR mp3 as 32 kbps. Rows with no
   `FolderPath` are streaming entries and skipped. Read-only.
+  **`open_database` is a context manager, and works without sqlcipher3.**
+  With it, pyrekordbox opens the file as always. Without it — always in the
+  browser build, and on any platform sqlcipher3 has no wheel for — the file
+  is decrypted into a plain copy under `tmp/` (`sqlcipher.py`), pyrekordbox
+  opens that with `unlock=False` (stdlib `sqlite3`), and the copy is deleted
+  on exit; `engine.dispose()` first, or Windows refuses the delete. A
+  non-empty `master.db-wal` is warned about: its pages are not in the file.
+  Checked on the local library: `sdm rekordbox --export-csv` byte-identical
+  with sqlcipher3 hidden (`sys.modules["sqlcipher3"] = None`), both tiers.
+- `sqlcipher.py` — SQLCipher 4 decryption, page by page: PBKDF2-HMAC-SHA512
+  (256,000 iterations) for the key, AES-256-CBC per 4096-byte page, the last
+  80 bytes of each the IV and an HMAC-SHA512 that is **checked on every page**
+  (a wrong key or a damaged page is an error, not a database of noise). Those
+  are SQLCipher 4's defaults and were verified, not assumed: the local
+  `master.db` (17,525 pages) decrypts with every HMAC matching, and all 48
+  tables, 59,214 rows and the schema equal sqlcipher3's read. ~4 s natively;
+  in Pyodide the parts measured 0.3 s (PBKDF2), 1.1 s (AES) and 0.4 s (HMAC).
+  **pycryptodome, not `cryptography`:** the latter's
+  Rust extension panics on import in Pyodide 314, and Pyodide's stdlib has no
+  `hashlib.pbkdf2_hmac` (no OpenSSL). The `rekordbox` extra carries it.
+- `tools.py` — running fpcalc, ffprobe and ffmpeg (`run`), so a front end can
+  change how: `runner` is a subprocess by default and the browser build's
+  WebAssembly otherwise (`sdm.browser._run_tool`). **stdout is streamed in
+  exactly `chunk_size` pieces however the tool wrote it** (`_Rechunk`), which
+  is load-bearing: `quality` sums its spectrum over whole FFT frames per
+  chunk, so other chunking would change the report. `available(tool)` replaces
+  `shutil.which` for callers. Like `core.spotify`'s hooks, set by the browser
+  build and nothing else. `quality` and `duplicates` reports were
+  byte-identical before and after routing through it.
 - `anlz.py` — reads Rekordbox's own analysis (beat grid, phrase structure) out
   of the `PIONEER/USBANLZ/` files on a Pioneer USB. Backs `sdm analyze`; see
   `docs/analyze.md`. **It walks the ANLZ tag chain and parses one tag at a time
@@ -226,6 +257,12 @@ identical inputs.
   decoded from the stream, not read from a tag), so it is always required and
   the others are opt-in. A non-required dimension is still used opportunistically
   when both tracks in a pair happen to have it.
+  **Progress counts tracks fingerprinted, not pairs compared** (every
+  `FINGERPRINT_PROGRESS_EVERY`, ~140 lines on the reference library where
+  pairs gave 2,566): fingerprinting is the time, so a front end's bar, which
+  draws the line's first `N/M`, keeps pace with the clock, and tracks stay
+  first to the end so it never runs backwards. `tracks_from_files` reports
+  "reading tags: N/M" the same way (`log=`).
 - `fingerprint.py` — chromaprint via `fpcalc`; similarity is Hamming distance
   over the int32 subfingerprints. **It shells out to `fpcalc -raw -json` rather
   than using pyacoustid, and that is load-bearing.** `acoustid.fingerprint_file`
@@ -240,7 +277,9 @@ identical inputs.
   Unrelated tracks score ~0.5, not ~0: half the bits of two random 32-bit words
   agree by chance. That is why the threshold is 0.85 and not something near zero.
   A missing binary raises `RuntimeError`; a file that merely fails to decode
-  returns `None`. Callers depend on that distinction.
+  returns `None`. Callers depend on that distinction. fpcalc runs through
+  `core.tools`, which is how the browser build's WebAssembly fpcalc answers
+  the same command line.
 - `fpcalc_fetch.py` — the escape hatch for the one dependency pip cannot
   install. `borrowed_fpcalc()` is a context manager: it yields an already
   installed fpcalc if there is one (downloading nothing), otherwise it fetches
@@ -259,7 +298,9 @@ identical inputs.
   `tarfile`), because the thing that makes fingerprinting possible must not
   itself need a dependency that is missing. `CHROMAPRINT_VERSION` is pinned
   rather than resolved from the "latest release" API so a run cannot silently
-  change binaries.
+  change binaries. With a `core.tools.runner` set (the browser build) it
+  yields None at once: there is nothing to find or fetch, and `compute`
+  reaches fpcalc through the runner by name.
 - `playlist.py` — the `Playlist`/`PlaylistTrack` model, playlist-link parsing,
   and the playlist CSV format **in both directions**: `read_playlist_csv`
   (lenient — columns found by alias, only title and artist required, because
@@ -475,7 +516,13 @@ output goes only to `--output-dir` or `--export-csv`. Preserve this.
 - `reader.py` — three-tier source resolution: an explicit/USB `master.db`, then
   the **local** Rekordbox `master.db` (the only source with analyzed BPM and
   key, so it is preferred even when a USB is given, then scoped to the USB by
-  filename via `_scope_to_usb`), then raw ID3 tags. Opening the database and
+  filename via `_scope_to_usb`), then raw ID3 tags. **Tier 1 is scoped the same
+  way when the explicit `master.db` is a library's rather than the USB's own**
+  (no row points inside `--usb-path`; a folder without `Contents/` is scoped
+  as it is). Before, `--db-path <local master.db> --usb-path D:/` returned the
+  whole library at its `C:\` paths; it now matches tier 2 byte for byte on the
+  test clone (3,664 tracks). The browser build depends on it: a picked
+  `master.db` is the only way in there, and its paths mean nothing in a tab. Opening the database and
   walking its rows is `core/rekordbox_db.py`'s, shared with `quality`; what a
   row becomes (a `Track`) stays here.
 - Detection itself lives in `core/duplicates.py` and `core/fingerprint.py` —
@@ -588,7 +635,13 @@ flags → one CSV, `out/quality/quality_<folder>.csv`. **Read-only.** The old
   compression ratio.
 - `command.py` — threads, not processes: the work is ffmpeg plus numpy that
   releases the GIL, and processes measured only 8% faster. The main thread
-  waits with a 0.5 s timeout so KeyboardInterrupt lands. Results are sorted by
+  waits with a 0.5 s timeout so KeyboardInterrupt lands. `--jobs 1` runs on
+  the calling thread with no pool, which is what the browser build (no
+  threads) forces; the report is byte-identical either way. ffmpeg and
+  ffprobe run through `core.tools`, same argv and same read size. "measured
+  N/M" is printed from 0, after every file in a run under 2,500 files and at
+  most every `PROGRESS_EVERY` above: a 100-track run in a tab is ~6 s a file,
+  and at every 25 its bar sat still for minutes. Results are sorted by
   path, so a report is byte-identical whatever `--jobs` was (checked at 2 and
   4). Columns are grouped by aspect: measured (no prefix), then
   `meta_` (the file's header and tags), then `rb_`; `issues` holds the flag
@@ -632,9 +685,11 @@ a missing directory. `rekordbox` has no positional, so it is safe there.
 
 `__init__.py` (parser) → `command.py`: load the playlist (a CSV path via
 `core.playlist.read_playlist_csv`, or a link via `core.spotify`) → read the
-folder's tags (`core.tags.read_title_artist_raw`, all of `AUDIO_EXTS`) → match →
-write `missing_<playlist>.csv` and `matched_<playlist>.csv` to
-`out/playlist-diff/`. **Read-only** on the playlist and the files. The Spotify
+folder's tags (`core.tags.read_title_artist_raw`, all of `AUDIO_EXTS`) → match,
+checking each file that matches by name (`checks.py`) → write
+`missing_<playlist>.csv` (missing, maybe and mismatch, with `local_duration`)
+and `matched_<playlist>.csv` (with Spotify's `duration` and `local_duration`)
+to `out/playlist-diff/`. **Read-only** on the playlist and the files. The Spotify
 client and the playlist model started out in this package and moved to core
 when `playlist-export` needed them (rule 1); a 403 from Spotify is reported
 here with the CSV advice, not as a failure.
@@ -653,13 +708,46 @@ here with the CSV advice, not as a failure.
   Spotify's `Title - Remix` convention or accents, and adding a third
   strictness there would muddy the documented two. **When `dig` needs "is this
   owned", this module moves to `core` (rule 1); it is not imported across.**
+  `match` takes a `vet` and tries **every** file that matches by name, the
+  first passing one winning in each tier, so a mix saved under a track's name
+  cannot hide the real file beside it. Only when all fail is the answer the
+  fourth outcome, `mismatch`, naming the first that failed.
+- `checks.py` — whether the file that matched by name is the track: a fourth
+  outcome, `mismatch`, reported with the missing tracks (status column, the
+  file, its length, the reason). Three ways a file fails: **unreadable**
+  (mutagen), **cut off** — its size under `CUT_OFF_RATIO` (0.95) of what its
+  header's bitrate and length imply — and **far off Spotify's length**:
+  at least `LONGER_RATIO` (2×) *and* `LONGER_SECONDS` (10 min) longer, or at
+  most `SHORTER_RATIO` (0.3×). With no length in the playlist, under
+  `MIN_TRACK_SECONDS` (35 s). **The length rule is loose on purpose:**
+  `NEUTRAL_VERSION_WORDS` makes an extended mix and a radio edit the same
+  track, and a 7-minute extended against Spotify's 3:30 edit stays owned.
+  Every threshold was set on the test clone: every healthy file's size ratio
+  is ≥ 1.000 (tags and art only add bytes) and below 0.95 sit exactly the two
+  files `quality` found damaged by decoding (an MP3 holding 7:00 of a claimed
+  8:05, at 0.867; the undecodable AIFF, at 0.479); real tracks top out at
+  12–13.5 min and the files beyond are mixes (19–122 min); the 15 files under
+  30 s are samples. `Carl Finlow - RND.mp3` is a 27-minute medical podcast
+  under a track's name, which is the case this exists for. Only files that
+  matched are read, one header each, cached per path.
 
 **Measured** on the test clone: a full run reads 3,664 files in ~9s. A synthetic
 55-track Exportify-format playlist built from the library (owned tracks
 re-spelled Spotify-style, rips matched via title tags, fake remixes, invented
 tracks, real titles under wrong artists) came out 55/55 as constructed. That is
-a consistency check, not an accuracy figure — no real Spotify playlist has been
-run, since that needs the user's client ID.
+a consistency check, not an accuracy figure.
+
+**The length and file checks, measured** with a playlist made from every
+tagged file's own title, artist and length (3,628 rows) plus constructed rows:
+against the pre-check code exactly 9 rows changed, all intended — the two
+damaged files, five mixes and podcasts under track names given track-length
+Spotify rows, and a 12-second file as a 3-minute track (twice, with and
+without a length) — and the 3,621 others are untouched, including a 6:56 file
+against a 3:30 and a 12:00 listing. A mix and the real track under one name
+gives the real one; a rejected exact match beside a different version is
+`maybe` with both in the note. ~1 s slower than before (11.5 s). Byte-identical
+in Pyodide. A real `ad` playlist run exists in `out/` but was made before
+this, and its CSVs do not record Spotify's lengths for matched tracks.
 
 ### `playlist-export`
 
@@ -747,7 +835,8 @@ needs no extra; Node is a build-time dependency of the page, never of the server
   `DuplicatesView` (any `duplicates.json`; A/B keeps the playback position
   within a group; warns on metadata-only groups), `PlaylistDiffView` (only for
   files in a `playlist-diff` folder — catalog's `missing_metadata_*.csv` has the
-  same shape of name — and it checks the columns, falling back to a table),
+  same shape of name — and it checks the columns, falling back to a table;
+  Missing / Maybe / Mismatch / Owned tabs, both lengths beside each file),
   `QualityView` (any `quality_*.csv`, columns checked the same way: each
   aspect's measured value with its `meta_`/`rb_` claims beneath, a contradicted
   claim highlighted by `compare.py`'s tolerances — the flags themselves always
@@ -784,12 +873,16 @@ the previous report untouched.
 
 The third front end. Static files on Cloudflare Workers (`wrangler.jsonc`:
 assets only, no Worker script); Python runs in the visitor's tab through
-Pyodide 314.0.7 (Python 3.14) in a Web Worker. Online: `catalog` (both modes),
-`analyze`, `playlist-diff` (CSV or link), `playlist-export`. Not:
-`duplicates`/`rekordbox` (fpcalc), `quality` (ffmpeg). **`cli.py` and every
-feature are unchanged** — `sdm.browser.ONLINE_COMMANDS` and `HIDDEN_FIELDS`
-cut the forms down instead, and the Spotify login goes through
-`core.spotify`'s two hooks.
+Pyodide 314.0.7 (Python 3.14) in a Web Worker. **Every command is online**
+(`sdm.browser.ONLINE_COMMANDS`). Where a command needs something a tab lacks,
+a core hook supplies it, and **no feature branches on being in a browser**:
+fpcalc, ffprobe and ffmpeg run as WebAssembly through `core.tools.runner`,
+`master.db` is decrypted by `core.sqlcipher` where sqlcipher3 is missing, and
+the Spotify login goes through `core.spotify`'s two hooks. `HIDDEN_FIELDS`
+cuts the forms down (output locations, tool paths, `--jobs`). What the
+features gained for it is ordinary: `quality --jobs 1` runs on the calling
+thread, `rekordbox` scopes a library's `master.db` named by `--db-path` to the
+USB, and `rekordbox` reports a missing fpcalc instead of a traceback.
 
 - `frontend/src/api.ts` stays the page's only link to a backend.
   `vite build --mode browser` redirects every import of it to
@@ -802,8 +895,10 @@ cut the forms down instead, and the Spotify login goes through
 - `src/sdm/browser.py` — one entry point, `call(name, args_json)`, answering
   JSON with the status `sdm web`'s server would have sent. `boot`, `commands`,
   `prepare` (form -> argv through `schema.build`; refuses an offline command, a
-  path not picked in this tab, a Spotify link), `run` (`cli.main` in process),
+  path not picked in this tab, a Spotify link, `quality --limit` over
+  `QUALITY_LIMIT`; forces `quality --jobs 1`), `run` (`cli.main` in process),
   `outputs` (the `jobs.py` rule), `table` (`reports.TableReader`).
+  `_run_tool` is `core.tools.runner` here.
 - `src/browser/worker.ts` — boots Pyodide, mounts picks, runs one command at a
   time; messages are handled strictly in order. `src/browser/api.ts` — job
   records and logs (polled exactly as from the server), a copy of every report,
@@ -811,6 +906,50 @@ cut the forms down instead, and the Spotify login goes through
 
 What is load-bearing:
 
+- **The audio tools are three WebAssembly programs, instantiated afresh per
+  run** (`wasm/build.sh`, `frontend/src/browser/tools.ts`). fpcalc is
+  Chromaprint 1.6.1's own `fpcalc.cpp` and ffprobe is FFmpeg 7.1.1's own, both
+  built against FFmpeg 7.1.1 audio-only (Chromaprint with av_tx and
+  swresample, as its releases are). **ffmpeg is not ffmpeg:** since 6.0 the
+  ffmpeg program requires threads (`ffmpeg_deps="... threads"`), and 5.1, the
+  last without, prints no decode-error count and decodes differently. So
+  `wasm/sdm_ffmpeg.c` is the one command line `quality` runs, on the 7.1.1
+  libraries, mirroring fftools where `measure.py` looks: the first audio
+  stream, others discarded, `threads=auto`, errors counted as fftools counts
+  them, the guessed channel layout for a bare channel count (WAVs without a
+  mask failed without it), the filtergraph built from the first frame, and the
+  closing "packets read (N bytes) … decode errors" line in fftools' format.
+  Anything else on its command line is refused.
+  - *Fresh per run:* a program's globals are per process. *Synchronous:*
+    Python's call is. The modules are worker-only (the Node glue awaits an
+    import first) and `WASM_ASYNC_COMPILATION=0`, so the instance is ready
+    when the factory returns, its promise notwithstanding; the glue is
+    patched (and the patch checked) to reuse the module compiled once, which
+    makes an instance ~2 ms. *stdout* is a device handing 256 KiB pieces to
+    Python's callback, and `core.tools` regroups them to the pipe's read size;
+    a cancel lands in that callback, so it stops a decode mid-track.
+  - *Files:* `providePicked` gives each instance the files its argv names: a
+    picked folder's File mounted with WORKERFS (no copy, read through 1 MiB
+    blocks), a picked single file copied. 1.7–1.8 MB per module, 5.3 MB in all.
+  - *Parity with the native programs* (36 files: all 7 FLAC, 8 WAV, the AIFF,
+    20 MP3): ffprobe's JSON identical on all; fpcalc identical on 23, the rest
+    at similarity 0.99997; sdm_ffmpeg's samples byte-identical for every
+    lossless file and its statistics and loudness identical on all. MP3
+    samples differ in the last bits (no x86 vector code), which in 100 tracks
+    moved `clipped_samples` by 1–4 in 11 rows and nothing else; 89 rows were
+    identical in every column.
+- **Packages and tools on demand.** `COMMAND_PACKAGES` (SQLAlchemy,
+  python-dateutil, pycryptodome: 3.4 MB) and `COMMAND_TOOLS` are loaded
+  before a command's first run, not at boot, so a first visit is the same
+  16 MB as before. `build_browser.py` reads both from `sdm.browser`, so what
+  it ships cannot disagree. `--without-tools` builds without `wasm/`'s output
+  (no Emscripten): `NEEDS_TOOLS` (`duplicates`, `quality`) go offline.
+- **`master.db` is a single-file pick** (Chromium's folder picker refuses
+  AppData), copied into `/picked`, decrypted per run into `/tmp`. psutil is
+  stubbed and pyrekordbox's platform warnings silenced (`_shim_pyrekordbox`,
+  `boot`).
+- **`quality` is capped at `QUALITY_LIMIT` (100) per run** and one file at a
+  time: ~6 s a track in a tab. A library is for sdm on a machine.
 - **Module worker.** Pyodide 314 refuses a classic one ("Classic web workers
   are not supported"), hence Vite's `worker.format: "es"`.
 - **The pyrekordbox shim** (`browser._shim_pyrekordbox`). `import
@@ -884,8 +1023,8 @@ What is load-bearing:
   `connect-src 'self' https://accounts.spotify.com https://api.spotify.com` is
   what makes "your files never leave the browser" enforced rather than
   claimed, in the page and the worker alike. The two Spotify hosts are the
-  playlist commands' and nothing else. `'wasm-unsafe-eval'` for Pyodide,
-  `media-src blob:` for playback. Everything is self-hosted for this reason —
+  playlist commands' and nothing else. `'wasm-unsafe-eval'` for Pyodide and
+  the audio tools, `media-src blob:` for playback. Everything is self-hosted for this reason —
   do not add a CDN or any other origin. A test that byte-compares reports
   needs a second tab with CSP bypassed: `fetch(blob:)` is connect-src.
 - **The Spotify login** (`src/browser/spotify.ts`). The tab itself goes to
@@ -912,9 +1051,14 @@ What is load-bearing:
   npm package `frontend/package.json` pins (keep `PYODIDE_VERSION` in step),
   numpy and packaging from jsDelivr checked against the lock's sha256, and the
   lock itself trimmed into `python.json` — so `pyodide/v<version>/` holds only
-  release files and is cached as immutable. 16.0 MB on a first visit. The build
+  release files and is cached as immutable. 16.4 MB on a first visit. The
+  audio tools go under `tools/<hash>/`, named by their content, and are cached
+  as immutable too. **`wasm/build.sh` cannot run where `build_browser.py` runs
+  on Cloudflare** (it needs Emscripten; `build/` is gitignored), so a
+  dashboard build as the README describes it fails until its output reaches
+  the build, or builds `--without-tools`: undecided, see the README. The build
   fails if Cloudflare's limits are exceeded (Oct 2026: 25 MiB per file, 20,000
-  files per version on the free plan); it makes ~25 files, the largest 9.6 MB.
+  files per version on the free plan); it makes 31 files, the largest 9.6 MB.
 
 **Measured baseline** (reference USB, Edge 155 headless, `wrangler dev`,
 warm disk cache; native from the same machine): start 2.4–2.9s; picking the
@@ -937,6 +1081,25 @@ in either picker, the prompts' exact wording, Firefox and Safari, a real
 Cloudflare deploy, and three cancel paths no test could time: the grace
 fallback (a command that ignores the interrupt), a cancel landing just as a
 run ends, and one sent while the run still waits behind another call.
+
+**`duplicates`, `rekordbox` and `quality`, verified** in headless Edge with
+the CSP enforced, through the real forms and the folder input picker, with
+the `master.db` file pick answered through CDP: every report byte-identical
+to a native run on the same inputs once paths are mapped (`duplicates`,
+`rekordbox` with fingerprints and by name, `quality` with Rekordbox claims,
+`playlist-diff` with the new checks), `--limit 101` refused with its
+message, a `quality` cancel mid-decode stopping in 0.4 s through the
+interrupt (not the restart fallback) with nothing kept, and the next run in
+the same tab fine; zero console errors; light, dark and phone width with no
+page overflow (the segmented tabs now scroll instead of clipping at phone
+width). At library scale under Node (the worker's Python half, tools through
+`tools.ts`): `duplicates` found the native baseline's 158 groups with
+identical membership from the same 64,157 candidate pairs; `quality` on 100
+tracks as above. **Not verified:** Firefox and Safari; a real Cloudflare
+deploy; the Windows file dialog for `master.db` (CDP answered it); a
+library-scale `rekordbox` fingerprint run in a tab; `quality` on a
+multi-hour file in a tab (stdout is streamed and reads go through two 1 MiB
+blocks, so memory should stay flat, but the 100 tracks measured were songs).
 
 **Spotify, verified** in headless Edge with the CSP enforced against a fake
 Spotify: a local HTTPS server with a self-signed certificate, which Edge

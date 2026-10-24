@@ -6,13 +6,15 @@ import { PlayButton } from "../player";
 import { TableView } from "./TableView";
 
 type Row = Record<string, string>;
-type Tab = "missing" | "maybe" | "owned";
+type Tab = "missing" | "maybe" | "mismatch" | "owned";
 
 /**
  * `playlist-diff`'s two reports as one answer: what to go and get (missing),
  * what to check by ear (maybe — a different version, or a file with no artist
- * to confirm), and what the folder has (owned), each owned track with the file
- * it matched so a wrong match can be caught rather than trusted.
+ * to confirm), what to replace (mismatch — a file by the track's name that is
+ * not the track: far too long or short, cut off, unreadable), and what the
+ * folder has (owned), each owned track with the file it matched and both
+ * lengths so a wrong match can be caught rather than trusted.
  *
  * Column names are `playlist_diff/command.py`'s.
  */
@@ -63,6 +65,7 @@ export function PlaylistDiffView({
 
   const missingCount = absent.filter((r) => r.status === "missing").length;
   const maybeCount = absent.filter((r) => r.status === "maybe").length;
+  const mismatchCount = absent.filter((r) => r.status === "mismatch").length;
   const total = absent.length + owned.length;
   const shopping = rows.map((r) => (r.artist ? `${r.artist} - ${r.title}` : r.title)).join("\n");
 
@@ -82,6 +85,10 @@ export function PlaylistDiffView({
           <span>maybe</span>
         </div>
         <div className="stat">
+          <strong>{mismatchCount.toLocaleString()}</strong>
+          <span>mismatch</span>
+        </div>
+        <div className="stat">
           <strong>{owned.length.toLocaleString()}</strong>
           <span>owned</span>
         </div>
@@ -93,6 +100,7 @@ export function PlaylistDiffView({
             [
               ["missing", `Missing (${missingCount})`],
               ["maybe", `Maybe (${maybeCount})`],
+              ["mismatch", `Mismatch (${mismatchCount})`],
               ["owned", `Owned (${owned.length})`],
             ] as const
           ).map(([key, label]) => (
@@ -112,6 +120,12 @@ export function PlaylistDiffView({
           confirm. Play the local file to decide.
         </p>
       )}
+      {tab === "mismatch" && rows.length > 0 && (
+        <p className="muted">
+          Not counted as owned: a file in the folder carries the track's name but is not the track — far longer or
+          shorter than Spotify's, cut off, or unreadable. Replace it.
+        </p>
+      )}
 
       {rows.length === 0 ? (
         <Empty>{filter ? "Nothing matches the filter." : tab === "missing" ? "Nothing missing." : "None."}</Empty>
@@ -123,7 +137,9 @@ export function PlaylistDiffView({
                 <th className="num">#</th>
                 <th>Artist</th>
                 <th>Title</th>
+                <th className="num">Length</th>
                 <th>Matched file</th>
+                <th className="num">File length</th>
                 <th>Via</th>
               </tr>
             </thead>
@@ -133,9 +149,11 @@ export function PlaylistDiffView({
                   <td className="num muted">{r["#"]}</td>
                   <td>{r.artist}</td>
                   <td>{r.title}</td>
+                  <td className="num">{r.duration}</td>
                   <td>
                     <LocalFile path={r.local_file} title={r.title} artist={r.artist} />
                   </td>
+                  <td className="num">{r.local_duration}</td>
                   <td className="muted">{r.matched_via}</td>
                 </tr>
               ))}
@@ -152,7 +170,7 @@ export function PlaylistDiffView({
                 <th>Title</th>
                 <th>Album</th>
                 <th className="num">Length</th>
-                {tab === "maybe" && <th>Closest file in the folder</th>}
+                {tab !== "missing" && <th>{tab === "maybe" ? "Closest file in the folder" : "File by that name"}</th>}
                 <th>Spotify</th>
               </tr>
             </thead>
@@ -164,11 +182,12 @@ export function PlaylistDiffView({
                   <td>{r.title}</td>
                   <td className="muted">{r.album}</td>
                   <td className="num">{r.duration}</td>
-                  {tab === "maybe" && (
+                  {tab !== "missing" && (
                     <td>
                       {r.closest_local_file && (
                         <LocalFile path={r.closest_local_file} title={r.title} artist={r.artist} />
                       )}
+                      {r.local_duration && <span className="muted small"> · {r.local_duration}</span>}
                       {r.note && <div className="muted small">{r.note}</div>}
                     </td>
                   )}

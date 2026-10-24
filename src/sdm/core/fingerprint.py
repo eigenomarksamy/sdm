@@ -13,6 +13,10 @@ install ("put fpcalc on PATH") produced a tool that could fingerprint every
 track and then not compare any of them. `fpcalc -raw` emits the integers
 directly, so comparison needs nothing that computing did not already require.
 
+It runs through `core.tools`, so the browser build's WebAssembly fpcalc —
+Chromaprint's own fpcalc.cpp, the same release (`wasm/build.sh`) — answers the
+same command line there.
+
 fpcalc only reads the first `DEFAULT_LENGTH_SECONDS` of audio. That is a
 deliberate speed/accuracy trade: it is far more than enough to tell two
 recordings apart, and it keeps each fingerprint about a thousand integers long.
@@ -24,6 +28,8 @@ import os
 import subprocess
 from dataclasses import dataclass
 from typing import Optional, Sequence
+
+from sdm.core import tools
 
 #: Environment variable naming the fpcalc binary, honoured by pyacoustid too.
 FPCALC_ENV = "FPCALC"
@@ -72,13 +78,7 @@ def compute(
     ]
 
     try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=FPCALC_TIMEOUT,
-            encoding="utf-8",
-            errors="replace",
-        )
+        proc = tools.run(cmd, timeout=FPCALC_TIMEOUT)
     except FileNotFoundError as exc:
         raise RuntimeError(
             f"fpcalc not found (tried {cmd[0]!r}). Install the Chromaprint "
@@ -89,12 +89,13 @@ def compute(
         # Timeout or a spawn failure on this one file.
         return None
 
-    if proc.returncode != 0 or not proc.stdout:
+    stdout = proc.stdout.decode("utf-8", errors="replace")
+    if proc.returncode != 0 or not stdout:
         # Unsupported codec, corrupt file, non-audio masquerading as audio.
         return None
 
     try:
-        payload = json.loads(proc.stdout)
+        payload = json.loads(stdout)
         raw = tuple(int(v) for v in payload["fingerprint"])
         duration = float(payload["duration"])
     except (ValueError, TypeError, KeyError):

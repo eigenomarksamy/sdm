@@ -16,6 +16,10 @@ see until it clicks in a set.
 Every number here is a measurement of the audio, never a reading of a header.
 What the header claims is `core.tags.read_audio_header`'s business; comparing
 the two is `compare.py`'s.
+
+Both tools run through `core.tools.run`: processes here, WebAssembly builds of
+the same 7.1.1 in the browser build. The reads are the same size either way,
+which keeps the spectrum, and so the report, the same.
 """
 from __future__ import annotations
 
@@ -28,6 +32,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
+
+from sdm.core import tools
 
 #: FFT length for the long-term spectrum: ~11 Hz bins at 44.1 kHz, fine enough
 #: to place an encoder's lowpass to within a few bins.
@@ -310,14 +316,10 @@ def _probe(path: str, decoders: Decoders) -> dict:
         "-of", "json", path,
     ]
     try:
-        proc = decoders.start(command, stdin=subprocess.DEVNULL,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        completed = tools.run(command, tracker=decoders)
     except FileNotFoundError:
         raise RuntimeError("ffprobe not found. Install ffmpeg and put it on PATH.") from None
-    try:
-        out, err = proc.communicate()
-    finally:
-        decoders.finished(proc)
+    out, err = completed.stdout, completed.stderr
     try:
         streams = json.loads(out.decode("utf-8", errors="replace") or "{}").get("streams")
     except ValueError:
@@ -336,41 +338,19 @@ def _decode(path: str, channels: int, acc: _Accumulator, decoders: Decoders) -> 
         "-af", "ebur128=peak=true:framelog=quiet",
         "-f", "f32le", "-",
     ]
+    frame_bytes = 4 * channels
+
+    def feed(data: bytes) -> None:
+        usable = len(data) - len(data) % frame_bytes
+        if usable:
+            acc.add(np.frombuffer(data[:usable], dtype="<f4"))
+
     try:
-        proc = decoders.start(command, stdin=subprocess.DEVNULL,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        completed = tools.run(command, on_stdout=feed, tracker=decoders,
+                               chunk_size=FFT_SIZE * FRAMES_PER_READ * frame_bytes)
     except FileNotFoundError:
         raise RuntimeError("ffmpeg not found. Install it and put it on PATH.") from None
-
-    # stderr is drained on its own thread: verbose output runs to several KB
-    # before the first sample, more than a pipe buffers, and ffmpeg would block
-    # on it while this thread blocks on stdout.
-    err: list[bytes] = []
-    drain = threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True)
-    drain.start()
-
-    frame_bytes = 4 * channels
-    chunk = FFT_SIZE * FRAMES_PER_READ * frame_bytes
-    try:
-        while True:
-            data = proc.stdout.read(chunk)
-            if not data:
-                break
-            usable = len(data) - len(data) % frame_bytes
-            if usable:
-                acc.add(np.frombuffer(data[:usable], dtype="<f4"))
-    finally:
-        # On an exception — Ctrl-C included — ffmpeg must not outlive the run.
-        if proc.poll() is None and not proc.stdout.closed:
-            proc.stdout.close()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-        drain.join()
-        decoders.finished(proc)
-    return b"".join(err).decode("utf-8", errors="replace")
+    return completed.stderr.decode("utf-8", errors="replace")
 
 
 def _ebur128(stderr: str) -> dict:

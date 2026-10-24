@@ -1,7 +1,9 @@
 """Read tracks from a Rekordbox library.
 
 Source resolution order:
-  1. A master.db given directly (--db-path) or sitting on the USB.
+  1. A master.db given directly (--db-path) or sitting on the USB. When it is a
+     library's rather than the USB's own (no row points inside --usb-path),
+     it is scoped to the USB by filename, as in 2.
   2. The local Rekordbox master.db (pyrekordbox auto-locates it). This is the
      only source that carries the analyzed BPM and key, so it is preferred even
      when a USB is supplied. With --usb-path we then restrict the result to the
@@ -45,9 +47,19 @@ def load_tracks(db_path: str, *, usb_path: Optional[str] = None) -> list[Track]:
     # 1. A master.db we can open directly (explicit --db-path or one on the USB).
     if db_path.endswith("master.db") and os.path.isfile(db_path):
         try:
-            return _load_v6_tracks(db_path, usb_path)
+            tracks = _load_v6_tracks(db_path, usb_path)
         except Exception as e:
             print(f"master.db at {db_path} failed to load: {e}")
+        else:
+            if usb_path and tracks and not _any_under(tracks, usb_path):
+                # A library's master.db named by path (in the browser build the
+                # only way in), not the USB's own: its rows point at the
+                # library's drive, so scope it to the USB as tier 2 does. A
+                # folder without Contents/ is scoped as it is.
+                files_dir = contents_dir if os.path.isdir(contents_dir) else os.path.normpath(usb_path)
+                print(f"using {db_path}'s analysis, scoped to {files_dir}")
+                return _scope_to_usb(tracks, files_dir)
+            return tracks
 
     # 2. The local Rekordbox master.db — the only source with analyzed BPM/key.
     try:
@@ -76,45 +88,45 @@ def _load_v6_tracks(db_path: str, usb_path: Optional[str]) -> list[Track]:
     if not os.path.isfile(db_path):
         raise FileNotFoundError(f"master.db not found at {db_path}")
 
-    db = open_database(db_path)
     tracks: list[Track] = []
-    for row in iter_content(db):
-        file_path = _resolve_file_path(row, usb_path=usb_path)
-        if not file_path:
-            continue
-        tracks.append(
-            Track(
-                id=str(_get(row, "ID")),
-                title=_get(row, "Title") or "",
-                artist=_artist_name_v6(row),
-                file_path=file_path,
-                bpm=_bpm_v6(row),
-                key=_key_name_v6(row),
-                duration_seconds=_duration_v6(row),
+    with open_database(db_path, log=print) as db:
+        for row in iter_content(db):
+            file_path = _resolve_file_path(row, usb_path=usb_path)
+            if not file_path:
+                continue
+            tracks.append(
+                Track(
+                    id=str(_get(row, "ID")),
+                    title=_get(row, "Title") or "",
+                    artist=_artist_name_v6(row),
+                    file_path=file_path,
+                    bpm=_bpm_v6(row),
+                    key=_key_name_v6(row),
+                    duration_seconds=_duration_v6(row),
+                )
             )
-        )
     return tracks
 
 
 def _load_local_master_db() -> list[Track]:
     """Load every track from the local Rekordbox master.db (auto-located)."""
-    db = open_database()
     tracks: list[Track] = []
-    for row in iter_content(db):
-        folder = _get(row, "FolderPath") or ""
-        if not folder:
-            continue
-        tracks.append(
-            Track(
-                id=str(_get(row, "ID")),
-                title=_get(row, "Title") or "",
-                artist=_artist_name_v6(row),
-                file_path=os.path.normpath(folder),
-                bpm=_bpm_v6(row),
-                key=_key_name_v6(row),
-                duration_seconds=_duration_v6(row),
+    with open_database(log=print) as db:
+        for row in iter_content(db):
+            folder = _get(row, "FolderPath") or ""
+            if not folder:
+                continue
+            tracks.append(
+                Track(
+                    id=str(_get(row, "ID")),
+                    title=_get(row, "Title") or "",
+                    artist=_artist_name_v6(row),
+                    file_path=os.path.normpath(folder),
+                    bpm=_bpm_v6(row),
+                    key=_key_name_v6(row),
+                    duration_seconds=_duration_v6(row),
+                )
             )
-        )
     return tracks
 
 
@@ -155,14 +167,20 @@ def _scope_to_usb(local_tracks: list[Track], contents_dir: str) -> list[Track]:
                 unmatched_files.append(usb_file)
 
     if unmatched_files:
-        tracks.extend(tracks_from_files(unmatched_files, start_idx=len(tracks)))
+        tracks.extend(tracks_from_files(unmatched_files, start_idx=len(tracks), log=print))
     print(f"matched {matched} USB track(s) to local analysis, {len(unmatched_files)} via ID3 only")
     return tracks
 
 
+def _any_under(tracks: list[Track], root: str) -> bool:
+    """Whether any track's file is inside `root`, compared as Windows compares paths."""
+    prefix = os.path.normcase(os.path.join(os.path.normpath(root), ""))
+    return any(os.path.normcase(os.path.normpath(t.file_path)).startswith(prefix) for t in tracks)
+
+
 def _load_id3_tracks(contents_dir: str, usb_root: str) -> list[Track]:
     """Walk Contents/ and read ID3 tags + duration from audio files."""
-    return tracks_from_files(list(iter_audio_files(contents_dir)), start_idx=0)
+    return tracks_from_files(list(iter_audio_files(contents_dir)), start_idx=0, log=print)
 
 
 def _get(row, attr: str, default=None):

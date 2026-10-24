@@ -23,6 +23,9 @@ dependencies = [
 [project.optional-dependencies]
 rekordbox = [
     "pyrekordbox>=0.4.0",
+    # Decrypts master.db where sqlcipher3 is missing (core/sqlcipher.py) - the
+    # browser build always, and any platform sqlcipher3 has no wheel for.
+    "pycryptodome>=3.19",
 ]
 # `sdm analyze` uses pyrekordbox for its ANLZ structs only - it never opens a
 # database - but the package is the same one, so the extra is an alias rather

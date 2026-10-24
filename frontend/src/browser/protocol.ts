@@ -15,6 +15,8 @@ export interface Manifest {
   lock: object;
   /** Our wheels, by file name, under wheels/. */
   wheels: string[];
+  /** Directory of the audio tools' WebAssembly (tools.ts), relative to the site root; null in a build without them. */
+  tools: string | null;
   /** Byte size of every file the boot downloads, keyed by URL path: the progress bar's total. */
   bytes: Record<string, number>;
 }
@@ -29,7 +31,11 @@ export interface BootInfo {
   version: string;
   out_root: string;
   music_root: string;
-  playlist_root: string;
+  picked_root: string;
+  /** Pyodide packages a command needs beyond the boot set, by command (`sdm.browser.COMMAND_PACKAGES`). */
+  command_packages: Record<string, string[]>;
+  /** The WebAssembly tools a command runs, by command (`sdm.browser.COMMAND_TOOLS`); see tools.ts. */
+  command_tools: Record<string, string[]>;
   mount: MountRules;
   commands: Command[];
   offline: string[];
@@ -87,7 +93,7 @@ export type ToWorker =
   | { type: "run"; id: number; job: string; command: string; argv: string[]; spotify: RunLogin | null }
   | { type: "stage"; id: number; files: Staged[] }
   | { type: "mount"; id: number; name: string; handle?: FileSystemDirectoryHandle }
-  | { type: "csv"; id: number; name: string; file: File }
+  | { type: "file"; id: number; name: string; file: File }
   | { type: "restore"; id: number; files: { path: string; mtime: number; data: Blob }[] };
 
 export type FromWorker =

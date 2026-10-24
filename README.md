@@ -18,8 +18,8 @@ features that share a small common core:
  sdm download         —  deprecated, not registered (see below)
 
  sdm web              —  all of the above in a browser, on this machine only
- sdm.eigenomar.com    —  catalog, analyze and both playlist commands in any
-                         browser, with no file uploaded (the browser build, below)
+ sdm.eigenomar.com    —  every command in any browser, with no file uploaded
+                         (the browser build, below)
 ```
 
 Each feature is self-contained: it may use `sdm.core`, never a sibling. Heavy
@@ -109,6 +109,7 @@ parts.
 | | CSV import | Any playlist, via an export from Exportify, TuneMyMusic and the like; columns found by name | A `.csv` path in place of the link | done |
 | | Matching | Title and artist, version-aware: "Extended Mix" and "Radio Edit" are the same track, a named remix is not | The folder's tags, plus "Artist - Title" read out of title tags and filenames | done |
 | | "Maybe" | A different version owned, or a file with no artist tag to confirm — listed with the file, never counted as owned | — | done |
+| | "Mismatch" | A file under the track's name that is not the track: far off Spotify's length (a mix or podcast, a preview clip), cut off, or unreadable — listed with the file and the reason | — | done |
 | | Report | `missing_<playlist>.csv` (the answer) and `matched_<playlist>.csv` (which file each owned track matched) | `--output-dir` | done |
 | | Saved login | Skipping the browser on later runs | — | done in the browser build, which keeps its login in the browser. Planned for the CLI and `sdm web`: needs a persistent per-user location, not yet settled. Meanwhile, `playlist-export` once and diff the CSV |
 | `playlist-export` | *(the command)* | Writes a Spotify playlist to CSV with Exportify's column names. **Read-only** against Spotify | A playlist link, URI or ID; `--output-csv` | partial — **only playlists you own or collaborate on**, the same API limit as `playlist-diff` |
@@ -119,7 +120,7 @@ parts.
 | | Forms | One per command, generated from its own `--help` definition, so a new flag appears with no web change | — | done |
 | | Jobs | Each run a subprocess: live log, progress where the command prints `N/M`, cancel that behaves like Ctrl-C | — | done — in memory, gone on restart; the reports stay |
 | | Duplicate groups | Copies side by side, differences highlighted, A/B playback that keeps the position between copies | Any `duplicates.json` (`duplicates` or `rekordbox`) | done |
-| | Playlist diff | Missing / maybe / owned tabs, local file playback, Spotify links, copy-as-list | `missing_`/`matched_<playlist>.csv` | done |
+| | Playlist diff | Missing / maybe / mismatch / owned tabs, both lengths, local file playback, Spotify links, copy-as-list | `missing_`/`matched_<playlist>.csv` | done |
 | | Audio quality | Each file's measurements with its claims beside them, disagreements highlighted; filter by issue; a full measured / file / Rekordbox comparison per track; playback | `quality_<folder>.csv` | done |
 | | Spotify setup guide | Creating the Spotify app and client ID step by step, with this front end's redirect URI to copy, sharing, troubleshooting, and what the login allows | — | done — also in the browser build |
 | | Report tables | Any CSV under `out/`, paged, filtered and sorted server-side; audio paths get a play button | — | done — files over 64 MB are paged only |
@@ -722,16 +723,31 @@ reference library carries an ISRC. Both sides are normalized the same way:
   `Artist - Title`, or a file with no tags whose name is
   `[YT2mp3.info] - Artist - Title (3.mp3`, is still read correctly.
 
-Each playlist track comes out as one of three:
+Each playlist track comes out as one of four:
 
 | Status | Meaning |
 | --- | --- |
 | `owned` | A file agrees on title, artist and version |
 | `maybe` | The title and artist agree but the version differs, or the file has no artist to confirm it. Listed **with the file**, so you decide |
+| `mismatch` | A file carries the track's name but is not the track: far longer or shorter than Spotify's length, cut off, or unreadable. Listed **with the file and why**, so you replace it |
 | `missing` | Nothing in the folder comes close |
 
-`maybe` exists because the costly mistake is a false `owned`: it hides a track
-you then never go and get.
+`maybe` and `mismatch` exist because the costly mistake is a false `owned`: it
+hides a track you then never go and get.
+
+A file that matches by name is checked before it counts:
+
+- **Length.** Far off Spotify's — at least twice as long *and* 10 minutes
+  longer (a DJ mix or a podcast saved under the track's name), or under 30% of
+  it (a preview clip, a download that stopped). Ordinary edits pass: a
+  7-minute extended mix against Spotify's 3:30 radio edit is `owned`, as before.
+- **Cut off or damaged.** Smaller than its own header says it should be, or
+  unreadable. On the reference library this finds exactly the two files
+  `sdm quality` finds damaged by decoding them, and nothing else.
+- **Too short to be a song** (under 35 s), when the playlist gives no length.
+
+When several files share the name, the one that passes wins, so a mix under a
+track's name does not hide the real file beside it.
 
 ### What it writes
 
@@ -756,13 +772,14 @@ wrote out\playlist-diff\matched_My_Test_Playlist.csv
 correctly `missing`, not `owned`.
 
 - `missing_<playlist>.csv` — the answer: status, artist, title, album,
-  duration, ISRC, Spotify link, and for `maybe` the closest local file and why.
+  duration, ISRC, Spotify link, and for `maybe` and `mismatch` the local file,
+  its length, and why.
 - `matched_<playlist>.csv` — the evidence: every `owned` track and the file it
-  matched, plus which reading matched (tags, artist-in-title, filename), so a
-  wrong match can be caught rather than trusted.
+  matched, both lengths, plus which reading matched (tags, artist-in-title,
+  filename), so a wrong match can be caught rather than trusted.
 
-On the 3,664-file reference library a run takes ~9s, almost all of it reading
-tags.
+On the 3,664-file reference library a run takes ~9–11 s, almost all of it
+reading tags.
 
 ---
 
@@ -882,12 +899,21 @@ The same page as `sdm web`, with no server behind it. Python runs in the
 visitor's own browser through [Pyodide](https://pyodide.org), you pick a music
 folder or a Rekordbox USB, and the commands read it where it is.
 
-Four commands run there: **`catalog`** (both modes), **`analyze`**,
-**`playlist-diff`** (a CSV export, or a Spotify link once logged in) and
-**`playlist-export`**. The rest need a program a browser tab does not have —
-`duplicates` and `rekordbox` fingerprint with `fpcalc`, `quality` uses ffmpeg —
-so they stay with `sdm` on your own machine. Spotify links need a login with a
-client ID of your own; see [Spotify access](#in-the-browser-build).
+Every command runs there. The programs some of them need — `fpcalc` for
+`duplicates` and `rekordbox`, ffmpeg and ffprobe for `quality` — run in the tab
+as WebAssembly builds of the same releases (`wasm/`), and `rekordbox` and
+`quality` read a Rekordbox `master.db` you pick, decrypting it in the tab.
+These are downloaded the first time a command needs them, not on the first
+visit. Spotify links need a login with a client ID of your own; see
+[Spotify access](#in-the-browser-build).
+
+Decoding audio is slower in a tab than on your own machine, and `quality`
+measures **at most 100 files per run** there. For a whole library, run `sdm
+quality` locally.
+
+To pick your Rekordbox library, choose `master.db` from
+`%APPDATA%\Pioneer\rekordbox` (type that into the file dialog; the folder is
+hidden). It is read, never changed, and stays in the tab like everything else.
 
 ### Your files never leave the browser
 
@@ -941,19 +967,29 @@ in the tab instead, which takes a couple of seconds, with the same result.
 ### Build and deploy
 
 ```ps1
-python build_browser.py              # npm ci, the page, Pyodide, the wheels -> dist/
+wsl bash wasm/build.sh               # fpcalc, ffprobe, sdm_ffmpeg as WebAssembly -> build/wasm-tools/
+python build_browser.py              # npm ci, the page, Pyodide, the wheels, the tools -> dist/
 python build_browser.py --no-install # the same without npm ci
+python build_browser.py --without-tools  # no tools: duplicates and quality left offline
 npx wrangler dev                     # serve dist/ with its headers, http://127.0.0.1:8787
 ```
 
-`build_browser.py` needs Node and Python with pip, and the network at build time
-(npm, PyPI, and jsDelivr for Pyodide's numpy and packaging, hash-checked against
-Pyodide's lock file). Cloudflare serves `dist/` as static assets
-(`wrangler.jsonc`). In the Cloudflare dashboard, *Workers & Pages → Create →
-Import a repository*:
+`wasm/build.sh` runs on Linux or in WSL (it installs a pinned Emscripten and
+builds FFmpeg 7.1.1 and Chromaprint 1.6.1, hash-checked, in ~5 minutes the
+first time); rerun it only when `wasm/` changes. `build_browser.py` needs Node
+and Python with pip, and the network at build time (npm, PyPI, and jsDelivr for
+Pyodide's packages, hash-checked against Pyodide's lock file). Cloudflare
+serves `dist/` as static assets (`wrangler.jsonc`). In the Cloudflare
+dashboard, *Workers & Pages → Create → Import a repository*:
 
 - Build command: `python3 build_browser.py`
 - Deploy command: `npx wrangler deploy`
+
+That build cannot make the WebAssembly tools — Cloudflare's build has no
+Emscripten, and `build/` is not in the repository — so as it stands it fails,
+and with `--without-tools` it deploys a site where `duplicates` and `quality`
+are offline. Deploying them needs `build/wasm-tools/` to reach that build, or
+`dist/` to be built here and deployed with `npx wrangler deploy`.
 
 To develop the page against Python in the browser, run `build_browser.py`
 once, then `npm run dev:browser` in `frontend/`.

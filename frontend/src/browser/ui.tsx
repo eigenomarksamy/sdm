@@ -181,6 +181,7 @@ export function PathPickRow({
   const [picked, setPicked] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const folder = mode === "dir";
+  const database = accept.includes(".db");
 
   // Busy only once the picker has returned: a browser that never reports a
   // dismissed picker must not leave the button disabled.
@@ -216,6 +217,15 @@ export function PathPickRow({
           : "Your browser may call this an upload. Nothing is uploaded: the files are read here, in this tab. With a large folder the browser can take several seconds to list it before anything appears."}
       </p>
     );
+  } else if (database) {
+    // AppData is hidden, and Chromium's folder picker refuses it outright; a
+    // file dialog takes a typed path.
+    status = (
+      <p className="help">
+        Rekordbox keeps its library in <code>%APPDATA%\Pioneer\rekordbox\master.db</code> — type that folder into the
+        file dialog. It is read here, in this tab, and never changed or uploaded.
+      </p>
+    );
   }
 
   return (
@@ -223,7 +233,7 @@ export function PathPickRow({
       <div className="input-row">
         {input}
         <button type="button" disabled={progress !== null} onClick={() => start(false)}>
-          {folder ? "Choose folder…" : "Choose CSV…"}
+          {folder ? "Choose folder…" : database ? "Choose master.db…" : "Choose CSV…"}
         </button>
       </div>
       {status}

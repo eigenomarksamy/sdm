@@ -39,6 +39,7 @@ import zipfile
 from contextlib import contextmanager
 from typing import Callable, Iterator, Optional
 
+from sdm.core import tools
 from sdm.core.fingerprint import fpcalc_binary
 from sdm.core.paths import scratch
 
@@ -179,7 +180,14 @@ def borrowed_fpcalc(
     message for "fingerprinting is unavailable".
 
     A downloaded binary is removed when the block exits, whatever the reason.
+
+    Where a front end runs the tools itself (`core.tools.runner`: the browser
+    build's WebAssembly fpcalc) there is nothing to find or fetch: None, and
+    `fingerprint.compute` reaches fpcalc through the runner by name.
     """
+    if tools.runner is not None:
+        yield None
+        return
     installed = shutil.which(fpcalc_binary(explicit_path))
     if installed:
         yield installed
