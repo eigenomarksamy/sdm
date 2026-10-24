@@ -742,8 +742,8 @@ A file that matches by name is checked before it counts:
   it (a preview clip, a download that stopped). Ordinary edits pass: a
   7-minute extended mix against Spotify's 3:30 radio edit is `owned`, as before.
 - **Cut off or damaged.** Smaller than its own header says it should be, or
-  unreadable. On the reference library this finds exactly the two files
-  `sdm quality` finds damaged by decoding them, and nothing else.
+  unreadable. On the reference library (3,664 files) this finds exactly the
+  two files `sdm quality` finds damaged by decoding them, and nothing else.
 - **Too short to be a song** (under 35 s), when the playlist gives no length.
 
 When several files share the name, the one that passes wins, so a mix under a
@@ -952,6 +952,13 @@ the same commands run natively:
 | `catalog` | 8.3 s | 21 s |
 | `analyze` | 68 s | 85–88 s |
 | `playlist-diff` with a CSV | 8.3 s | 21 s |
+| `duplicates`, the whole library (3,664 tracks) | 9 min 12 s | 30.5 min |
+| `quality`, 100 tracks, with a picked `master.db` | ~2 min 15 s (8 jobs) | 9 min |
+
+While a command runs, its job page shows how far it is and about how long the
+current step has left, estimated from its pace over the last two minutes. On
+the 100-track `quality` run it started high (13 min at 5%, 8 actual) and was
+within a minute from 4 minutes on.
 
 The reports are byte-identical to a native run's, apart from the file paths
 (`/music/<folder>/…` in the browser). Reading tags is where the browser loses

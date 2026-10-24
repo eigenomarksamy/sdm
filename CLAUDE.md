@@ -210,7 +210,8 @@ identical inputs.
   on exit; `engine.dispose()` first, or Windows refuses the delete. A
   non-empty `master.db-wal` is warned about: its pages are not in the file.
   Checked on the local library: `sdm rekordbox --export-csv` byte-identical
-  with sqlcipher3 hidden (`sys.modules["sqlcipher3"] = None`), both tiers.
+  with sqlcipher3 hidden (`sys.modules["sqlcipher3"] = None`), both tiers
+  (3,547 tracks from the database alone, 3,664 scoped to the USB).
 - `sqlcipher.py` — SQLCipher 4 decryption, page by page: PBKDF2-HMAC-SHA512
   (256,000 iterations) for the key, AES-256-CBC per 4096-byte page, the last
   80 bytes of each the IV and an HMAC-SHA512 that is **checked on every page**
@@ -229,8 +230,8 @@ identical inputs.
   is load-bearing: `quality` sums its spectrum over whole FFT frames per
   chunk, so other chunking would change the report. `available(tool)` replaces
   `shutil.which` for callers. Like `core.spotify`'s hooks, set by the browser
-  build and nothing else. `quality` and `duplicates` reports were
-  byte-identical before and after routing through it.
+  build and nothing else. `quality` (30 tracks) and `duplicates` (12 tracks,
+  6 groups) reports were byte-identical before and after routing through it.
 - `anlz.py` — reads Rekordbox's own analysis (beat grid, phrase structure) out
   of the `PIONEER/USBANLZ/` files on a Pioneer USB. Backs `sdm analyze`; see
   `docs/analyze.md`. **It walks the ANLZ tag chain and parses one tag at a time
@@ -258,8 +259,8 @@ identical inputs.
   the others are opt-in. A non-required dimension is still used opportunistically
   when both tracks in a pair happen to have it.
   **Progress counts tracks fingerprinted, not pairs compared** (every
-  `FINGERPRINT_PROGRESS_EVERY`, ~140 lines on the reference library where
-  pairs gave 2,566): fingerprinting is the time, so a front end's bar, which
+  `FINGERPRINT_PROGRESS_EVERY`, ~140 lines on the reference library — 3,622
+  tracks fingerprinted, 64,157 pairs — where pairs gave 2,566): fingerprinting is the time, so a front end's bar, which
   draws the line's first `N/M`, keeps pace with the clock, and tracks stay
   first to the end so it never runs backwards. `tracks_from_files` reports
   "reading tags: N/M" the same way (`log=`).
@@ -637,7 +638,7 @@ flags → one CSV, `out/quality/quality_<folder>.csv`. **Read-only.** The old
   releases the GIL, and processes measured only 8% faster. The main thread
   waits with a 0.5 s timeout so KeyboardInterrupt lands. `--jobs 1` runs on
   the calling thread with no pool, which is what the browser build (no
-  threads) forces; the report is byte-identical either way. ffmpeg and
+  threads) forces; the report is byte-identical either way (30 tracks). ffmpeg and
   ffprobe run through `core.tools`, same argv and same read size. "measured
   N/M" is printed from 0, after every file in a run under 2,500 files and at
   most every `PROGRESS_EVERY` above: a 100-track run in a tab is ~6 s a file,
@@ -949,7 +950,8 @@ What is load-bearing:
   stubbed and pyrekordbox's platform warnings silenced (`_shim_pyrekordbox`,
   `boot`).
 - **`quality` is capped at `QUALITY_LIMIT` (100) per run** and one file at a
-  time: ~6 s a track in a tab. A library is for sdm on a machine.
+  time: 5.4–6.3 s a track in a tab (100 tracks, Edge and Node). A library is
+  for sdm on a machine.
 - **Module worker.** Pyodide 314 refuses a classic one ("Classic web workers
   are not supported"), hence Vite's `worker.format: "es"`.
 - **The pyrekordbox shim** (`browser._shim_pyrekordbox`). `import
@@ -1075,6 +1077,15 @@ USB 12–13s, ~10s of it the browser listing 29,593 files;
 `analyze` 85–88s (68s), `playlist-diff` CSV 21s (8.3s). Every report
 byte-identical to native once `C:\…\` paths are mapped to `/music/<folder>/…`
 (and `analysis.json`'s CRLF, which is Windows text mode, not the browser).
+`duplicates` on the whole USB (3,664 tracks, 3,622 of them fingerprinted)
+30.5 min (native 9m12s): the baseline's 158 groups, 178 confirmed pairs, 9
+tracks unfingerprintable, ~2 tracks fingerprinted a second. `quality --limit
+100` (100 of the 3,664 tracks) with a picked `master.db` 9 min (~5.4 s a
+track; native 8 jobs ~2m15s for the same 100), decrypt and package load
+included. **One earlier whole-library `duplicates` run (3,664 tracks)
+stalled** — every Edge process at 0% CPU after ~27 min of renderer CPU, no
+error anywhere the test could see — and the rerun on the same code finished;
+the cause is unknown. Watch for it.
 
 **Verified** in headless Edge via `puppeteer-core` with the CSP enforced: all
 four commands through the real forms, byte-compared; playback of a picked file;
@@ -1093,17 +1104,19 @@ run ends, and one sent while the run still waits behind another call.
 **`duplicates`, `rekordbox` and `quality`, verified** in headless Edge with
 the CSP enforced, through the real forms and the folder input picker, with
 the `master.db` file pick answered through CDP: every report byte-identical
-to a native run on the same inputs once paths are mapped (`duplicates`,
-`rekordbox` with fingerprints and by name, `quality` with Rekordbox claims,
-`playlist-diff` with the new checks), `--limit 101` refused with its
+to a native run on the same inputs once paths are mapped — 12 tracks, six
+duplicate pairs from the reference USB (`duplicates`, `rekordbox` with
+fingerprints and by name, `quality` with Rekordbox claims, `playlist-diff`
+with the new checks and a 14-row playlist) — `--limit 101` refused with its
 message, a `quality` cancel mid-decode stopping in 0.4 s through the
 interrupt (not the restart fallback) with nothing kept, and the next run in
 the same tab fine; zero console errors; light, dark and phone width with no
 page overflow (the segmented tabs now scroll instead of clipping at phone
 width). At library scale under Node (the worker's Python half, tools through
-`tools.ts`): `duplicates` found the native baseline's 158 groups with
-identical membership from the same 64,157 candidate pairs; `quality` on 100
-tracks as above. **Not verified:** Firefox and Safari; a real Cloudflare
+`tools.ts`): `duplicates` on all 3,664 tracks found the native baseline's
+158 groups with identical membership from the same 64,157 candidate pairs;
+`quality` on 100 tracks as above. In Edge too, at the same scale: see the
+measured baseline above. **Not verified:** Firefox and Safari; a real Cloudflare
 deploy; the Windows file dialog for `master.db` (CDP answered it); a
 library-scale `rekordbox` fingerprint run in a tab; `quality` on a
 multi-hour file in a tab (stdout is streamed and reads go through two 1 MiB
@@ -1136,6 +1149,13 @@ with a real client ID, from either web front end.
   from library code. Keep `print` in `command.py` / handlers. `sdm web` relies
   on this: it shows whatever a command prints, draws a progress bar from any
   `N/M` in it, and finds reports by `wrote <path>` — keep printing those.
+  The bar also shows the time left in the step (`JobPage.tsx`'s
+  `useRemaining`): each new count is stamped when the page sees it, the rate
+  is taken over the last 2 minutes, a new total starts a new step, and it says
+  "estimating…" for the first 20 s. The log carries no times, so a command that
+  prints its count at an even pace gets a good estimate; on `quality --limit
+  100` (100 tracks) it read 13 min at 5% against 8 actual (the first files
+  are slower) and was within a minute from 4 minutes on.
 - `frontend/` is strict TypeScript with no linter; `npm run build` type-checks
   first. Match its existing style (2-space, double quotes, function
   components, a comment saying *why* above anything non-obvious).
