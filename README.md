@@ -967,7 +967,7 @@ in the tab instead, which takes a couple of seconds, with the same result.
 ### Build and deploy
 
 ```ps1
-wsl bash wasm/build.sh               # fpcalc, ffprobe, sdm_ffmpeg as WebAssembly -> build/wasm-tools/
+wsl bash wasm/build.sh               # fpcalc, ffprobe, sdm_ffmpeg as WebAssembly -> wasm/prebuilt/
 python build_browser.py              # npm ci, the page, Pyodide, the wheels, the tools -> dist/
 python build_browser.py --no-install # the same without npm ci
 python build_browser.py --without-tools  # no tools: duplicates and quality left offline
@@ -976,20 +976,23 @@ npx wrangler dev                     # serve dist/ with its headers, http://127.
 
 `wasm/build.sh` runs on Linux or in WSL (it installs a pinned Emscripten and
 builds FFmpeg 7.1.1 and Chromaprint 1.6.1, hash-checked, in ~5 minutes the
-first time); rerun it only when `wasm/` changes. `build_browser.py` needs Node
-and Python with pip, and the network at build time (npm, PyPI, and jsDelivr for
-Pyodide's packages, hash-checked against Pyodide's lock file). Cloudflare
-serves `dist/` as static assets (`wrangler.jsonc`). In the Cloudflare
-dashboard, *Workers & Pages → Create → Import a repository*:
+first time); rerun it only when `wasm/` changes, **and commit
+`wasm/prebuilt/`** afterwards. Cloudflare's build has no Emscripten, so the
+modules reach it through the repository. `stamp.json` beside them records what
+they were built from; `build_browser.py` checks it first thing and stops if
+`build.sh` or `sdm_ffmpeg.c` has changed since, so a change to `wasm/` cannot
+deploy with tools built before it.
+
+`build_browser.py` needs Node and Python with pip, and the network at build
+time (npm, PyPI, and jsDelivr for Pyodide's packages, hash-checked against
+Pyodide's lock file). Cloudflare serves `dist/` as static assets
+(`wrangler.jsonc`). In the Cloudflare dashboard, *Workers & Pages → Create →
+Import a repository*:
 
 - Build command: `python3 build_browser.py`
 - Deploy command: `npx wrangler deploy`
 
-That build cannot make the WebAssembly tools — Cloudflare's build has no
-Emscripten, and `build/` is not in the repository — so as it stands it fails,
-and with `--without-tools` it deploys a site where `duplicates` and `quality`
-are offline. Deploying them needs `build/wasm-tools/` to reach that build, or
-`dist/` to be built here and deployed with `npx wrangler deploy`.
+Or build here and run `npx wrangler deploy` yourself; the result is the same.
 
 To develop the page against Python in the browser, run `build_browser.py`
 once, then `npm run dev:browser` in `frontend/`.

@@ -20,7 +20,12 @@
 # directory by default), because building FFmpeg across the Windows mount is
 # several times slower. Only the output files are copied out.
 #
-#   wasm/build.sh [OUT_DIR]       default OUT_DIR: build/wasm-tools/
+#   wasm/build.sh [OUT_DIR]       default OUT_DIR: wasm/prebuilt/
+#
+# wasm/prebuilt/ is committed: Cloudflare's build runs build_browser.py but has
+# no Emscripten, so it ships the modules from the repository. Commit them after
+# every run. stamp.json beside them records what they were built from, and
+# build_browser.py refuses to ship them once a source here has changed.
 #
 # Pinned and hash-checked: Emscripten (the release Pyodide 314 is built with),
 # FFmpeg and Chromaprint. The Emscripten glue is patched once, below, and the
@@ -38,7 +43,7 @@ CHROMAPRINT_VERSION=1.6.1
 CHROMAPRINT_SHA256=3368805af0ee47b9df74df10b5001a44569e01df2844dab520031720dde9ad23
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-OUT="${1:-$HERE/../build/wasm-tools}"
+OUT="${1:-$HERE/prebuilt}"
 WORK="${WORK:-$HOME/.cache/sdm-ffmpeg-wasm}"
 PREFIX="$WORK/prefix"
 JOBS="$(nproc)"
@@ -152,5 +157,23 @@ for path in sys.argv[1:]:
     open(path, "w", encoding="utf-8").write(text.replace(OLD, NEW))
 PY
 
+# The stamp: sources and modules by sha256, the sources read with CRLF as LF,
+# since a Windows checkout may convert what Cloudflare's does not. Hashed and
+# checked as build_browser.py does (TOOL_SOURCES there is SOURCES here). Removed
+# before the copy, so an interrupted one leaves no stamp vouching for it.
+rm -f "$OUT/stamp.json"
 cp "$WORK"/out/*.mjs "$WORK"/out/*.wasm "$OUT/"
+python3 - "$HERE" "$OUT" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+here, out = Path(sys.argv[1]), Path(sys.argv[2])
+SOURCES = ("build.sh", "sdm_ffmpeg.c")
+stamp = {
+    "sources": {name: hashlib.sha256((here / name).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+                for name in SOURCES},
+    "outputs": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in sorted([*out.glob("*.mjs"), *out.glob("*.wasm")])},
+}
+(out / "stamp.json").write_text(json.dumps(stamp, indent=1) + "\n", encoding="utf-8")
+PY
 ls -l "$OUT"

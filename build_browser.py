@@ -12,8 +12,9 @@ the Python it runs:
     dist/wheels/               sdm and its pure-Python dependencies, built here
     dist/tools/<hash>/         fpcalc, ffprobe and sdm_ffmpeg as WebAssembly, for
                                duplicates, rekordbox and quality - built by
-                               wasm/build.sh on Linux or in WSL, copied from
-                               build/wasm-tools/
+                               wasm/build.sh on Linux or in WSL into
+                               wasm/prebuilt/, which is committed, because
+                               Cloudflare's build cannot run it
     dist/python.json           what the worker installs, and every file's size
                                for the download progress bar
 
@@ -86,10 +87,15 @@ DIST = ROOT / "dist"
 CACHE = ROOT / "build" / "pyodide-cache"
 
 #: What wasm/build.sh writes. It needs Emscripten and a POSIX shell, so it is
-#: run on its own (on Linux, or `wsl bash wasm/build.sh` on Windows) and this
-#: script ships its output. File names as frontend/src/browser/tools.ts has them.
-TOOLS_BUILD = ROOT / "build" / "wasm-tools"
+#: run on its own (on Linux, or `wsl bash wasm/build.sh` on Windows) and its
+#: output is committed: Cloudflare's build, which runs this script, has no
+#: Emscripten. File names as frontend/src/browser/tools.ts has them.
+PREBUILT_TOOLS = ROOT / "wasm" / "prebuilt"
 TOOL_FILES = ("fpcalc", "ffprobe", "sdm_ffmpeg")
+
+#: What wasm/build.sh builds from, hashed into its stamp.json (SOURCES there),
+#: so a change to one cannot deploy with modules built before it.
+TOOL_SOURCES = ("build.sh", "sdm_ffmpeg.c")
 
 
 def main() -> int:
@@ -100,6 +106,8 @@ def main() -> int:
                              "(no Emscripten). duplicates and quality are then offline, and "
                              "rekordbox cannot fingerprint.")
     args = parser.parse_args()
+    # Before anything slow, so a build that could not ship the tools stops at once.
+    tool_files = None if args.without_tools else prebuilt_tools()
 
     npm = shutil.which("npm")
     if npm is None:
@@ -113,7 +121,7 @@ def main() -> int:
     packages = fetch_packages(lock, pyodide_dir, PYODIDE_PACKAGES)
     later = fetch_packages(lock, pyodide_dir, [name for names in COMMAND_PACKAGES.values() for name in names])
     wheels = build_wheels(DIST / "wheels")
-    tools = None if args.without_tools else copy_tools(DIST / "tools")
+    tools = None if tool_files is None else copy_tools(tool_files, DIST / "tools")
 
     loaded = [pyodide_dir / "pyodide.asm.wasm", pyodide_dir / "python_stdlib.zip"]
     loaded += [pyodide_dir / lock["packages"][name]["file_name"] for name in packages]
@@ -181,14 +189,29 @@ def fetch_packages(lock: dict, dest: Path, names) -> list[str]:
     return wanted
 
 
-def copy_tools(dest: Path) -> str:
-    """wasm/build.sh's output, under a directory named by its hash, so it can be cached as immutable."""
-    files = [TOOLS_BUILD / f"{name}{ext}" for name in TOOL_FILES for ext in (".mjs", ".wasm")]
-    missing = [path.name for path in files if not path.is_file()]
+def prebuilt_tools() -> list[Path]:
+    """wasm/build.sh's committed output, if its stamp.json still matches wasm/ and the modules."""
+    files = [PREBUILT_TOOLS / f"{name}{ext}" for name in TOOL_FILES for ext in (".mjs", ".wasm")]
+    stamp_path = PREBUILT_TOOLS / "stamp.json"
+    where = PREBUILT_TOOLS.relative_to(ROOT).as_posix()
+    rebuild = ("Rebuild them on Linux or in WSL (bash wasm/build.sh) and commit the result, "
+               "or build without them: --without-tools")
+    missing = [path.name for path in [*files, stamp_path] if not path.is_file()]
     if missing:
-        sys.exit(f"build_browser.py: {', '.join(missing)} not in {TOOLS_BUILD.relative_to(ROOT)}/. "
-                 "Build the audio tools first, on Linux or in WSL: bash wasm/build.sh, "
-                 "or build without them: --without-tools")
+        sys.exit(f"build_browser.py: {', '.join(missing)} not in {where}/. {rebuild}")
+    stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
+    changed = [name for name in TOOL_SOURCES if stamp["sources"].get(name) != source_sha256(ROOT / "wasm" / name)]
+    if changed:
+        sys.exit(f"build_browser.py: wasm/{', wasm/'.join(changed)} changed since the audio tools in {where}/ "
+                 f"were built. {rebuild}")
+    altered = [path.name for path in files if stamp["outputs"].get(path.name) != sha256(path)]
+    if altered:
+        sys.exit(f"build_browser.py: {', '.join(altered)} in {where}/ not what wasm/build.sh wrote. {rebuild}")
+    return files
+
+
+def copy_tools(files: list[Path], dest: Path) -> str:
+    """The tools, under a directory named by their hash, so they can be cached as immutable."""
     digest = hashlib.sha256(b"".join(path.read_bytes() for path in files)).hexdigest()[:12]
     (dest / digest).mkdir(parents=True, exist_ok=True)
     for path in files:
@@ -215,6 +238,11 @@ def check_limits() -> None:
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def source_sha256(path: Path) -> str:
+    """CRLF read as LF: a Windows checkout may convert line endings that Cloudflare's does not."""
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 if __name__ == "__main__":

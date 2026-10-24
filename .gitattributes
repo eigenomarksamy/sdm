@@ -1,0 +1,6 @@
+# wasm/build.sh's output, committed for Cloudflare's build: shipped byte for
+# byte as built (its stamp.json hashes them), so never line-ending converted.
+wasm/prebuilt/** -text
+
+# Run by bash, in WSL too, where a CRLF checkout (core.autocrlf) breaks it.
+*.sh text eol=lf

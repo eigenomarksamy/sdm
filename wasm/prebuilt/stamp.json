@@ -1,0 +1,14 @@
+{
+ "sources": {
+  "build.sh": "8063031ae1986f9a1e4ebba27e17e135757804780e34aa2abb2652c4ed29d2b5",
+  "sdm_ffmpeg.c": "0025e75b22cd476d756757c64f9bb04be3317e0e721df6867ea833a51e946b07"
+ },
+ "outputs": {
+  "ffprobe.mjs": "33a98f7278080d0cfd85f81a79ee67cbd3275fe33a6dd81e7097058cd7a899eb",
+  "ffprobe.wasm": "5701eaa6860de85e056ec58a4281a66a3497a694abe7859d1d66035d54a4157b",
+  "fpcalc.mjs": "227dd7ced9baf54d4196808a808654700741ada59be51fea2835b30dc93d97a8",
+  "fpcalc.wasm": "1b229178b19707c96d0f0ecb1041b8d5146c37633ecafea6f1ccecaa49f41970",
+  "sdm_ffmpeg.mjs": "55e6577e911c3baa59736daa3b571e236921367cf29995a5872fda2b40188fd6",
+  "sdm_ffmpeg.wasm": "57a43fa0f0c96f1a87ccbbb5ac2146911aa3bf4af9f9dd06fcdded7cf9257136"
+ }
+}

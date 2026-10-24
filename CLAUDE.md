@@ -49,8 +49,8 @@ parked, not condemned.
 | `frontend/` | The page's source: React 19 + TypeScript 7 + Vite 8. `package-lock.json` is committed, `node_modules/` is not |
 | `src/sdm/browser.py` | The browser build's Python half. **A front end like `cli.py` and `sdm.web`, not a feature**; imports no feature |
 | `frontend/src/browser/` | The browser build's page side: the API swapped in for `src/api.ts`, the Pyodide worker, the audio tools' runner (`tools.ts`), the Spotify login, `_headers` |
-| `wasm/` | The browser build's audio tools: `build.sh` (Linux/WSL only) builds fpcalc, ffprobe and `sdm_ffmpeg.c` as WebAssembly into `build/wasm-tools/` (gitignored) |
-| `build_browser.py` | Builds the browser version into `dist/` (gitignored): page, self-hosted Pyodide, wheels, and `build/wasm-tools/`'s modules |
+| `wasm/` | The browser build's audio tools: `build.sh` (Linux/WSL only) builds fpcalc, ffprobe and `sdm_ffmpeg.c` as WebAssembly into `wasm/prebuilt/`, **committed** with its `stamp.json`, because Cloudflare's build cannot run `build.sh` |
+| `build_browser.py` | Builds the browser version into `dist/` (gitignored): page, self-hosted Pyodide, wheels, and `wasm/prebuilt/`'s modules |
 | `wrangler.jsonc` | Cloudflare Workers config serving `dist/` at sdm.eigenomar.com. `.wrangler/` is its gitignored state |
 | `docs/rekordbox.md` | Detailed Rekordbox reference |
 | `docs/analyze.md` | Detailed ANLZ / phrase-analysis reference |
@@ -105,7 +105,7 @@ sdm playlist-export "<spotify playlist link>"            # -> out/playlist-expor
 cd frontend; npm install; npm run build   # builds the page into src/sdm/web/static/
 sdm web                                   # http://127.0.0.1:8770, opens the browser
 
-wsl bash wasm/build.sh                    # the audio tools as WebAssembly -> build/wasm-tools/ (~5 min once)
+wsl bash wasm/build.sh                    # the audio tools as WebAssembly -> wasm/prebuilt/ (~5 min once); commit them
 python build_browser.py                   # the browser build -> dist/ (npm ci, Pyodide, wheels, tools)
 python build_browser.py --no-install      # same, skipping npm ci
 npx wrangler dev                          # serves dist/ with _headers, http://127.0.0.1:8787
@@ -1054,9 +1054,17 @@ What is load-bearing:
   release files and is cached as immutable. 16.4 MB on a first visit. The
   audio tools go under `tools/<hash>/`, named by their content, and are cached
   as immutable too. **`wasm/build.sh` cannot run where `build_browser.py` runs
-  on Cloudflare** (it needs Emscripten; `build/` is gitignored), so a
-  dashboard build as the README describes it fails until its output reaches
-  the build, or builds `--without-tools`: undecided, see the README. The build
+  on Cloudflare** (it needs Emscripten, and installing it and compiling FFmpeg
+  on every deploy, with nothing cached between builds, was rejected), **so its
+  output is committed in `wasm/prebuilt/`** (decided 2026-10-24, after a
+  dashboard build failed for want of it). `stamp.json` there, written by
+  `build.sh`, holds the sha256 of each source (`TOOL_SOURCES`, CRLF read as
+  LF) and each module; `build_browser.py` checks both before `npm ci` and
+  refuses a stale or altered set, so a change to `wasm/` cannot deploy with
+  modules built before it — rerun `build.sh` and commit. `.gitattributes`
+  keeps the modules byte-exact (`-text`) and `build.sh` LF. The rebuild that
+  made the stamp was byte-identical to the build before it, so the build is
+  reproducible from a warm Emscripten cache at least. The build
   fails if Cloudflare's limits are exceeded (Oct 2026: 25 MiB per file, 20,000
   files per version on the free plan); it makes 31 files, the largest 9.6 MB.
 
