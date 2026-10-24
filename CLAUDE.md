@@ -1265,10 +1265,10 @@ name to print (same mechanism, no fixture), a real browser tab, POSIX.
 
 ## Planned work
 
-Four features are designed but **not implemented** — see the "Ideas" section at
+Five ideas are designed but **not implemented** — see the "Ideas" section at
 the end of `README.md` for what each one is and why. Nothing named there exists
 in the tree; do not read a mention of one as a module to import or extend.
-(The fifth, a deeper `sdm quality`, is built; see its section above.)
+(Another, a deeper `sdm quality`, is built; see its section above.)
 
 1. **Library manager** — Rekordbox playlists, bulk tag/metadata edits, analysis
    import/export. New feature package; playlists first, because they are plain
@@ -1281,6 +1281,12 @@ in the tree; do not read a mention of one as a module to import or extend.
    actually are, from Discogs styles, Last.fm tags and MusicBrainz. **Build this
    before `dig`:** scoring a result as a percentile within its genre requires
    knowing the genre of the owned tracks it is being compared against.
+5. **rbxport integration** — [rbxport](https://github.com/chrisle/rbxport), a
+   real GPL-2.0-or-later Rust/Tauri app whose crates read and write
+   `export.pdb`, `exportLibrary.db`, `master.db` and ANLZ. Intended as an
+   oracle for sdm's readers and as the writer sdm's reports hand playlists to,
+   **not** linked into sdm: linking makes a combined GPL work, and the browser
+   build would distribute it. May shrink item 1 to producing playlists.
 
 What is already decided, and what the existing structure forces:
 

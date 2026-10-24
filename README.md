@@ -128,6 +128,7 @@ parts.
 | | Access from other devices | — | — | n/a, deliberately — bound to 127.0.0.1, see below |
 | *new* | Library manager | Rekordbox playlists, bulk tag and metadata edits, analysis import/export | A `master.db`, and a backup of it | planned |
 | *new* | Serato / Traktor export | One-way export of library and playlists onto a USB another ecosystem reads | The Rekordbox library, plus a destination USB | planned |
+| *new* | rbxport integration | [rbxport](https://github.com/chrisle/rbxport)'s Rust crates as the reference for the USB formats sdm cannot read, and rbxport itself as the writer sdm's reports hand playlists to, so sdm stays read-only | rbxport, built or installed beside sdm; nothing linked | planned — GPL-2.0-or-later, so how far it goes is partly a license decision |
 | *new* | `dig` | Finds records **not** in the library: seeds of genre, artist, track or label, tuned by underground level and source, cross-referenced against what is already owned | Seeds and tunables, plus API tokens; the first network-dependent feature | planned |
 | *new* | Genre enrichment | Fills in genres and styles for tracks already owned, from Discogs, Last.fm and MusicBrainz | The local library, plus API tokens | planned — a prerequisite for `dig`'s scoring, not just a companion |
 
@@ -1106,6 +1107,80 @@ does not survive it, since nothing else models phrases the way Rekordbox does.
 This is a writer, so the same rule applies as above — its own command, never a
 flag on a read-only one — and writing `GEOB` frames means modifying the audio
 files, which no part of this toolchain does today.
+
+### rbxport — a reference and a hand-off, not a dependency
+
+Unlike the rest of this section, rbxport itself is real: a separate project,
+none of which is in this tree. [rbxport](https://github.com/chrisle/rbxport)
+([rbxport.com](https://rbxport.com/)) is a free desktop library manager by
+TRIODE that works on an existing Rekordbox 6/7 library, with nothing to
+migrate: playlists, tags, cues, beat grids, USB export and PRO DJ LINK. Under
+its Tauri app is a set of independent Rust crates, and four of them do what
+this toolchain cannot do yet:
+
+- **`rbl-pdb`** reads and builds `export.pdb`, the DeviceSQL database that
+  pyrekordbox 0.4.4 cannot parse — the gap that leaves `quality`'s Rekordbox
+  columns blank for a USB on its own.
+- **`rbl-onelibrary`** reads and builds `exportLibrary.db` (Device Library Plus
+  / OneLibrary), a SQLCipher file. `core/sqlcipher.py` already decrypts
+  SQLCipher 4; the missing piece is the passphrase derivation, which this crate
+  has.
+- **`rbl-db`** reads and edits `master.db`, imports, and handles Rekordbox XML,
+  and refuses to write while Rekordbox runs — much of the library manager
+  above, already written.
+- **`rbl-anlz`** parses, edits and authors ANLZ files and keeps the sections it
+  does not know — a second reader to check `core/anlz.py` against.
+
+A fifth, **`rbl-difftool`**, is a developer CLI that snapshots the database
+before and after one action in Rekordbox and diffs the two: how to learn what a
+`master.db` writer must change before writing one.
+
+**Four ways to integrate it, loosest first.** The first two are the
+recommendation:
+
+1. **As an oracle.** Run rbxport's readers on the same USB and diff their output
+   against sdm's, the way the browser build's WebAssembly tools were checked
+   against the native ones. Nothing is shipped.
+2. **As the writer sdm hands off to.** sdm's reports become input that rbxport
+   or Rekordbox imports — one copy from each `duplicates` group,
+   `playlist-diff`'s owned tracks, `quality`'s flagged files — and rbxport does
+   the writing, with its own backup and undo. sdm stays read-only, the property
+   every command here is built around. What rbxport imports needs checking
+   first; `rbl-db` has a Rekordbox XML module.
+3. **As a helper binary.** A small Rust CLI over `rbl-pdb` and
+   `rbl-onelibrary` at a pinned commit, run through `core.tools` exactly as
+   fpcalc is, committed prebuilt as `wasm/prebuilt/` is. For the browser build
+   it would be compiled to WebAssembly. That is plausible for `rbl-pdb`, which
+   depends only on `thiserror` and `tracing`, and much harder for
+   `rbl-onelibrary`, which bundles SQLCipher and OpenSSL. Worth it only if a
+   Python reader for `export.pdb` stalls.
+4. **Linked**, as a PyO3 extension inside the package. Not recommended; see the
+   license below.
+
+**What decides how far this goes:**
+
+- **The license.** rbxport is GPL-2.0-or-later and vendors Rubber Band, also
+  GPL. Running it as a separate program is the loose coupling fpcalc and ffmpeg
+  already have; linking it into sdm would make one combined work under the GPL.
+  The browser build *distributes* whatever it serves, so an rbxport crate built
+  to WebAssembly on sdm.eigenomar.com brings the GPL's source obligations with
+  it. sdm has no license file today; choose one before option 3.
+- **There is no API to depend on.** The crates are not on crates.io, there is no
+  general CLI, and the project moves fast: created 2026-09-25, version 1.9.0 a
+  month later. Anything built on it pins a commit and expects to re-pin.
+- **Its own caveat matches this repo's:** a file that parses correctly does not
+  prove a player accepts it.
+- **It changes the library manager above.** If rbxport already manages
+  playlists, tags and cues on the same library, with backup and undo, sdm's
+  manager may shrink to producing the playlists — the half that needs sdm's
+  reports — and leave the editing to a tool built for it. Decide that before
+  writing the manager.
+
+It does not change the Serato/Traktor export: nothing in rbxport's crate list
+targets either (Mixxx support is an open feature request).
+
+Checked 2026-10-24 against the repository, its crate READMEs and
+`LICENSING.md`.
 
 ### `sdm dig` — find records that are not in the library yet
 
