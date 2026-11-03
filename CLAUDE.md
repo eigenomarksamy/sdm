@@ -1270,6 +1270,15 @@ the end of `README.md` for what each one is and why. Nothing named there exists
 in the tree; do not read a mention of one as a module to import or extend.
 (Another, a deeper `sdm quality`, is built; see its section above.)
 
+**The order of work is in a dev plan kept outside the tree**, as a Claude Doc:
+<https://claude.ai/artifact/HChzudLDtjn1k63wAEGDiP> (created 2026-11-03,
+private to its owner). It puts the open verification gaps, the known debt, a
+regression harness, a persistent state root and the ideas below into Phases
+0–7, and lists the decisions still open. Read it with the Claude Docs tools,
+not a web fetch, before planning or starting any of that work. It is edited
+outside git, so this pointer cannot say what it holds now. It is a plan, not
+state: where it and this file disagree about what exists, this file wins.
+
 1. **Library manager** — Rekordbox playlists, bulk tag/metadata edits, analysis
    import/export. New feature package; playlists first, because they are plain
    `master.db` rows and need no new format work.
