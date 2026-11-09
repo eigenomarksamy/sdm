@@ -233,7 +233,13 @@ export function SpotifySetup({ session, section }: { session: Session; section: 
             character, and check that you clicked Add and then Save.
           </dd>
           <dt>
-            Spotify&apos;s page says <code>INVALID_CLIENT: Invalid client</code>
+            {browser ? (
+              "“Spotify does not know this client ID”"
+            ) : (
+              <>
+                Spotify&apos;s page says <code>INVALID_CLIENT: Invalid client</code>
+              </>
+            )}
           </dt>
           <dd>The client ID is mistyped, or the app was deleted. Copy it again from the app&apos;s Settings.</dd>
           <dt>
@@ -255,6 +261,11 @@ export function SpotifySetup({ session, section }: { session: Session; section: 
           <dd>You clicked Cancel on Spotify&apos;s page. Log in again and agree.</dd>
           {browser ? (
             <>
+              <dt>&ldquo;The login did not finish&rdquo;</dt>
+              <dd>
+                You came back from Spotify&apos;s page with the Back button. If it showed an error, the answers above
+                cover it; otherwise log in again.
+              </dd>
               <dt>&ldquo;Log in to Spotify above first&rdquo; when you run</dt>
               <dd>
                 The login was ended here or in another tab, or could not be renewed; the login box says which. Log in

@@ -31,6 +31,19 @@ export function SpotifyLogin({ browser }: { browser: BrowserHooks }) {
   const [leaving, setLeaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => browser.spotify.subscribe(setState), [browser]);
+  // The Back button from Spotify's page restores this page as it was left, with
+  // `leaving` still set and nothing running that would clear it. Spotify's error
+  // pages never send anyone back, so Back is the only way home from them.
+  useEffect(() => {
+    if (!leaving) return;
+    const back = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      setLeaving(false);
+      setError("The login did not finish. If Spotify's page showed an error, the guide explains it.");
+    };
+    window.addEventListener("pageshow", back);
+    return () => window.removeEventListener("pageshow", back);
+  }, [leaving]);
   if (!state) return null;
 
   const guide = (section: string, text: string) => <a href={href("/spotify", { section })}>{text}</a>;
@@ -80,7 +93,10 @@ export function SpotifyLogin({ browser }: { browser: BrowserHooks }) {
                 spellCheck={false}
                 autoComplete="off"
                 disabled={state.finishing}
-                onChange={(e) => browser.spotify.setClientId(e.target.value)}
+                onChange={(e) => {
+                  setError(null);
+                  browser.spotify.setClientId(e.target.value);
+                }}
               />
               <button
                 type="button"

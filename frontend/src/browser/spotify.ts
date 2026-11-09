@@ -30,6 +30,9 @@ const PENDING_KEY = "sdm.spotify.pending";
 /** A token this close to expiring is renewed before a run is handed it. */
 const RENEW_MS = 5 * 60_000;
 
+/** How long the client ID check may hold up a login before it is skipped. */
+const CHECK_MS = 5_000;
+
 /** Where Spotify sends the tab back: the site's root, as the setup guide says to register it. */
 const redirectUri = new URL(import.meta.env.BASE_URL, window.location.origin).href;
 
@@ -57,7 +60,14 @@ interface TokenReply {
 }
 
 /** Spotify answered no, as opposed to not answering. The message is Spotify's. */
-class Refused extends Error {}
+class Refused extends Error {
+  /** OAuth's error code, when Spotify gave one. */
+  code: string | undefined;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.code = code;
+  }
+}
 
 const saved = () => store.get<Login | null>(LOGIN_KEY, null);
 
@@ -89,11 +99,46 @@ function base64url(bytes: Uint8Array): string {
 const random = (bytes: number) => base64url(crypto.getRandomValues(new Uint8Array(bytes)));
 
 /**
+ * Stop a client ID Spotify does not know before the tab leaves. Its login page
+ * cannot send such a visitor back: OAuth forbids redirecting for a client it
+ * cannot identify, so they get a bare `INVALID_CLIENT` page of Spotify's, after
+ * signing in if they were not already, and may lose the tab's picks getting back.
+ *
+ * Spotify has no call for this, so it is asked to trade a code it never issued:
+ * `invalid_client` for an unknown client, `invalid_grant` for a known one
+ * (measured 2026-11-04). Only `invalid_client` stops the login; any other answer,
+ * or none in time, carries on as if nothing had been asked, so a change on
+ * Spotify's side costs this check and never a login. It cannot see an
+ * unregistered redirect URI, which also answers `invalid_grant`.
+ */
+async function checkClient(clientId: string): Promise<void> {
+  try {
+    await requestToken(
+      {
+        grant_type: "authorization_code",
+        code: "sdm-client-check",
+        redirect_uri: redirectUri,
+        client_id: clientId,
+        code_verifier: random(64),
+      },
+      AbortSignal.timeout(CHECK_MS),
+    );
+  } catch (e) {
+    if (e instanceof Refused && e.code === "invalid_client") {
+      throw new Error(
+        "Spotify does not know this client ID. Copy it again from your app's Settings page; a deleted app's ID stops working.",
+      );
+    }
+  }
+}
+
+/**
  * Leave for Spotify's login page. The PKCE pair as core/spotify.py makes it:
  * 64 random bytes give an 86-character verifier, inside the 43-128 allowed.
  */
 async function login(scopes: string): Promise<void> {
   const clientId = state.clientId;
+  await checkClient(clientId);
   const verifier = random(64);
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
   const pending: Pending = { clientId, verifier, state: random(16), hash: window.location.hash };
@@ -172,10 +217,10 @@ async function finish(pending: Pending, code: string): Promise<void> {
   }
 }
 
-async function requestToken(body: Record<string, string>): Promise<TokenReply> {
+async function requestToken(body: Record<string, string>, signal?: AbortSignal): Promise<TokenReply> {
   let response: Response;
   try {
-    response = await fetch(TOKEN_URL, { method: "POST", body: new URLSearchParams(body) });
+    response = await fetch(TOKEN_URL, { method: "POST", body: new URLSearchParams(body), signal });
   } catch {
     throw new Error("Could not reach Spotify. Check the connection and try again.");
   }
@@ -184,7 +229,7 @@ async function requestToken(body: Record<string, string>): Promise<TokenReply> {
     error_description?: string;
   };
   if (!response.ok || !data.access_token) {
-    throw new Refused(data.error_description || data.error || `${response.status} ${response.statusText}`);
+    throw new Refused(data.error_description || data.error || `${response.status} ${response.statusText}`, data.error);
   }
   return data as TokenReply;
 }

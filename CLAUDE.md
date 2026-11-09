@@ -1049,6 +1049,20 @@ What is load-bearing:
   `prepare` refuses a link without one — before the command would say to set
   an environment variable. The worker reads the API with synchronous
   XMLHttpRequest (`_xhr`, over `pyodide.http.pyxhr`) as `core.spotify.transport`.
+  **Spotify's `INVALID_CLIENT` pages are Spotify's and never send anyone back**
+  (OAuth forbids redirecting for a client it cannot identify), which shapes two
+  things. `checkClient` stops an unknown ID before the tab leaves: Spotify has
+  no call for this, so it is asked to trade a code it never issued, and answers
+  `invalid_client` for an unknown client and `invalid_grant` for a known one
+  (measured 2026-11-04, on a real ID and four bad ones). Only `invalid_client`
+  stops the login; any other answer, or none within `CHECK_MS` (5 s), carries on,
+  so a change on Spotify's side costs the check and never a login. It cannot see
+  an unregistered redirect URI, which also answers `invalid_grant`, so that page
+  stays reachable and the way home is Back. **Back restores the page from the
+  back/forward cache as it was left**, so `SpotifyLogin` clears `leaving` on a
+  persisted `pageshow`; without that the button stayed on "Opening Spotify…" and
+  only a reload, which costs the picks, freed it. Short of memory the browser
+  evicts the page instead, and Back is a plain reload.
 - **Self-hosted assets** (`build_browser.py`): only the four core files from the
   npm package `frontend/package.json` pins (keep `PYODIDE_VERSION` in step),
   numpy and packaging from jsDelivr checked against the lock's sha256, and the
@@ -1135,6 +1149,21 @@ else's playlist, renewal (old refresh token kept when none comes back), a
 revoked refresh token, log out, other origins still blocked, and the box and
 guide in light, dark and phone width. **Not verified:** a real Spotify login
 with a real client ID, from either web front end.
+
+**The client ID check and Back, verified** the same way, with the stuck button
+reproduced on the old code first. An unknown ID stays on the page and never
+reaches `/authorize`; a known ID passes; a dropped connection, a 500 and no
+answer all still log in (the last 5 s later); Back from an error page restores
+the page (the cache's own CDP event, `Page.frameNavigated` type
+`BackForwardCacheRestore`) with the button free, the message shown, Python still
+answering through the restored worker, and a second login working; with the
+cache off, Back reloads to a working button. Against the **real** Spotify, in
+Edge with the CSP and CORS as shipped: a made-up ID stops on the page, and a
+real ID goes on to Spotify's login page, where the test stopped. Driving it:
+pass `--memory-pressure-off` (with 1 GB free the cache was evicted, so Back
+reloaded and the bug did not show), and poll from Node, because `waitForSelector`
+never returned under this page's CSP. **Not verified:** Back in Firefox and
+Safari.
 
 ## Conventions
 
