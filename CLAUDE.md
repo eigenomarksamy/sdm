@@ -1110,10 +1110,10 @@ horizontal scroll; zero console errors throughout. `npm run build` and
 origin-private-file-system handle on a 153-file subset (CDP cannot answer that
 picker for a real folder) — reports identical to the input picker and to
 native. **Not verified:** that picker on a real folder, a drive root (`D:\`)
-in either picker, the prompts' exact wording, Firefox and Safari, a real
-Cloudflare deploy, and three cancel paths no test could time: the grace
-fallback (a command that ignores the interrupt), a cancel landing just as a
-run ends, and one sent while the run still waits behind another call.
+in either picker, the prompts' exact wording, Firefox and Safari, and three
+cancel paths no test could time: the grace fallback (a command that ignores
+the interrupt), a cancel landing just as a run ends, and one sent while the
+run still waits behind another call.
 
 **`duplicates`, `rekordbox` and `quality`, verified** in headless Edge with
 the CSP enforced, through the real forms and the folder input picker, with
@@ -1130,8 +1130,8 @@ width). At library scale under Node (the worker's Python half, tools through
 `tools.ts`): `duplicates` on all 3,664 tracks found the native baseline's
 158 groups with identical membership from the same 64,157 candidate pairs;
 `quality` on 100 tracks as above. In Edge too, at the same scale: see the
-measured baseline above. **Not verified:** Firefox and Safari; a real Cloudflare
-deploy; the Windows file dialog for `master.db` (CDP answered it); a
+measured baseline above. **Not verified:** Firefox and Safari; the Windows
+file dialog for `master.db` (CDP answered it); a
 library-scale `rekordbox` fingerprint run in a tab; `quality` on a
 multi-hour file in a tab (stdout is streamed and reads go through two 1 MiB
 blocks, so memory should stay flat, but the 100 tracks measured were songs).
@@ -1164,6 +1164,16 @@ pass `--memory-pressure-off` (with 1 GB free the cache was evicted, so Back
 reloaded and the bug did not show), and poll from Node, because `waitForSelector`
 never returned under this page's CSP. **Not verified:** Back in Firefox and
 Safari.
+
+**Deployed, checked 2026-11-09** with `curl` against the live site:
+sdm.eigenomar.com answers 200 with `_headers` intact (COOP `same-origin`, COEP
+`require-corp`, a CSP from `default-src 'none'` whose `connect-src` is `'self'
+https://accounts.spotify.com https://api.spotify.com`); its page bundle has the
+Spotify login (*Log out*, `accounts.spotify.com`) and its worker names
+`fpcalc`, `ffprobe` and `sdm_ffmpeg`. So the build is live, new enough to have
+the audio tools and the login, and within Cloudflare's limits, since the deploy
+succeeded. No command was run on the live site: every other open check above
+stays open.
 
 ## Conventions
 
