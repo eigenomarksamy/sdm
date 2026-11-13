@@ -744,7 +744,7 @@ Each step is small and independent, and can be done between feature work.
   link, so F2, S1, L5 and R5 stay `backlog` until it is made.
 
 <a id="eo8"></a>
-#### EO8 · Line endings in `.gitattributes`
+#### EO8 · Line endings in `.gitattributes` · done
 
 - **Change:** add `* text=auto eol=lf` above the two rules already there, then
   run `git add --renormalize .`. Every text file in the index is LF already
@@ -752,7 +752,8 @@ Each step is small and independent, and can be done between feature work.
   anything, commit that on its own.
 - **Done when:** the line is in `.gitattributes`, and the renormalize is
   committed or staged nothing.
-- **Needs:** nothing.
+- **Result:** done 2026-11-13. The renormalize staged nothing, since all 109
+  text files in the index were LF already.
 
 <a id="eo9"></a>
 #### EO9 · The audio tools build only on Linux or WSL
@@ -786,8 +787,8 @@ cannot have.
   matter there. `catalog`'s audit compares paths as typed, which is [F1](#f1).
 - **[S1](#s1)'s default.** The proposed default, `%LOCALAPPDATA%\sdm`, names a
   Windows folder. [D1](#open-decisions) settles its Linux equivalent too.
-- **Line endings** are [EO8](#eo8). The `.sh` rule in `.gitattributes` already
-  keeps `build.sh` LF.
+- **Line endings:** every text file is LF, in the index and on checkout
+  ([EO8](#eo8)).
 
 ### Open questions
 
@@ -832,6 +833,8 @@ Every item in it has a home:
 
 ## Log
 
+- **2026-11-13 · EO8** · Done: `.gitattributes` has `* text=auto eol=lf`, and
+  the renormalize staged nothing.
 - **2026-11-13 · onboarding** · EO5–EO7 done: Issues are on, `gh` in this
   clone points here, and every open ticket has its issue in the ecosystem's
   GitHub Project, #1–#36, with its priority and its blocked-by links. The Doc is

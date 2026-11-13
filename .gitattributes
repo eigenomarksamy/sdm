@@ -1,3 +1,7 @@
+# Every text file is committed with LF, whatever machine commits it. The rules
+# below are more specific, so they override this one.
+* text=auto eol=lf
+
 # wasm/build.sh's output, committed for Cloudflare's build: shipped byte for
 # byte as built (its stamp.json hashes them), so never line-ending converted.
 wasm/prebuilt/** -text

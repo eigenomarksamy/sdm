@@ -13,7 +13,7 @@ def format_duration(seconds):
         return f"{minutes:02}:{seconds:02}"
     return "Unknown"
 
-def list_mp3_files(directory=f'C:\\Users\\omark\\Music\\library\\v1\\prprc\\{FOLDER_NAME}', output_csv=f'./mp3_file_list_{FOLDER_NAME}.csv'):
+def list_mp3_files(directory=f'C:\\Music\\library\\v1\\prprc\\{FOLDER_NAME}', output_csv=f'./mp3_file_list_{FOLDER_NAME}.csv'):
     with open(output_csv, mode='w', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
         # writer.writerow(["#", "File Path", "File Name", "Size (MBs)", "Last Modified", "Title", "Artist", "Duration (mm:ss)", "Genre"])

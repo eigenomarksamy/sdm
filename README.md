@@ -192,7 +192,7 @@ explicit flag, then the environment, then the default:
 | Scratch | `--tmp-dir DIR` | `SDM_TMP_DIR` | `./tmp` |
 
 ```ps1
-sdm catalog --out-dir D:/reports "C:\Users\omark\Music\postmodern"
+sdm catalog --out-dir D:/reports "C:\Music\postmodern"
 ```
 
 Per-command output flags still override the default *name*, and how they are
@@ -285,7 +285,7 @@ Walks a music folder and produces an **auditable** catalog — an export, a
 duplicate report, and a proof that the export is complete.
 
 ```ps1
-sdm catalog "C:\Users\omark\Music\postmodern"
+sdm catalog "C:\Music\postmodern"
 ```
 
 Writes two files into `out/catalog/`:

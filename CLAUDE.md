@@ -94,7 +94,7 @@ those flags can be typed after the subcommand — pass it straight through to
 ```ps1
 pip install -e ".[all]"       # or .[rekordbox] / .[quality] / bare
 
-sdm catalog "C:\Users\omark\Music\postmodern"
+sdm catalog "C:\Music\postmodern"
 sdm catalog "F:\Songs" --missing-metadata   # tracks lacking a title/artist
 sdm duplicates "F:/Songs"            # needs fpcalc on PATH
 sdm duplicates "F:/Songs" --skip-fingerprint   # sizing run only, see below
