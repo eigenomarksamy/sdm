@@ -35,8 +35,9 @@ does.
 **Needs and order.** *Needs* is a hard need: the ticket cannot start until that
 ticket is done, and in the GitHub Project it is a blocked-by link. *After* is
 order only, a choice that can change. A phase's needs from
-[Sequence and dependencies](#sequence-and-dependencies) apply to every ticket in
-it, directly or through a ticket it needs, and the phase's introduction says so.
+[Sequence and dependencies](#sequence-and-dependencies) are hard needs only for
+the tickets that use what the other phase delivers. For the phase's other
+tickets they are an *after*, and the phase's introduction says which is which.
 A ticket that needs an open decision
 (D1–D4) stays `backlog` in the Project until the decision is made, because a
 decision has no issue to link.
@@ -219,11 +220,11 @@ the order listed. Each ticket's check is its *done when*.
 ### F2 · A failed audit exits 0
 
 - **Where:** `catalog/exporter.run`.
-- **Change:** return a non-zero code when `is_valid` is false, so a script can
-  gate on it.
-- **Done when:** a tampered sidecar exits non-zero, a clean run exits 0, and an
+- **Change:** return 1 when `is_valid` is false, so a script can gate on it
+  ([D3](#open-decisions)).
+- **Done when:** a tampered sidecar exits 1, a clean run exits 0, and an
   `sdm web` job shows the failure.
-- **Needs:** [D3](#open-decisions), the exit code. **After:** F1.
+- **Needs:** nothing, since D3 is decided. **After:** F1.
 
 <a id="f3"></a>
 ### F3 · `rekordbox` needs fpcalc on PATH
@@ -329,10 +330,10 @@ This phase needs the real Spotify login checked first ([V1](#v1)).
 ### S1 · The state root, with the saved Spotify login
 
 **Proposal.** A `state` root, set the way the other two are: `--state-dir`, then
-`SDM_STATE_DIR`, then a default. The default is the per-user
-`%LOCALAPPDATA%\sdm` rather than `./state`, because a refresh token is a
-credential and should not sit in a project folder ([D1](#open-decisions)). It
-holds two things:
+`SDM_STATE_DIR`, then a default. The default is per-user, `%LOCALAPPDATA%\sdm`
+on Windows and `$XDG_STATE_HOME/sdm`, by default `~/.local/state/sdm`, on
+Linux, rather than `./state`, because a refresh token is a credential and
+should not sit in a project folder ([D1](#open-decisions)). It holds two things:
 
 - **`spotify/`: the login.** It stores the refresh token and renews it 5 minutes
   before expiry, the way the browser build already does. Add a `--logout` option
@@ -349,7 +350,7 @@ in this phase runs in a tab.
 - **Done when:** two `playlist-export` runs in a row open the browser only once,
   and deleting the state folder makes the next run log in again. The README's
   *Saved login* row then moves to done for the CLI and for `sdm web`.
-- **Needs:** [V1](#v1), [D1](#open-decisions).
+- **Needs:** [V1](#v1). [D1](#open-decisions) is decided.
 
 ## Phase 4 — Library manager, with rbxport as the oracle
 
@@ -359,8 +360,9 @@ library, with its own backup and undo, so a writer of sdm's own is worth
 building only if handing off fails. This keeps every sdm command read-only for
 as long as possible.
 
-Every ticket in this phase needs [H1](#h1), whose writer fixtures it uses,
-directly or through a ticket it needs.
+The tickets that import into Rekordbox or write need [H1](#h1), whose writer
+fixtures they use: L2 and L4, and L5 through them. L1 and L3 touch no library,
+so for them H1 is an *after*.
 
 <a id="l1"></a>
 ### L1 · Extend the oracle from Phase 1
@@ -371,7 +373,7 @@ directly or through a ticket it needs.
 - **Done when:** both build at `rbl-pdb`'s pinned commit, and their output on
   the reference USB is diffed against `core/anlz.py`'s, with every difference
   recorded in the [log](#log).
-- **Needs:** [F6](#f6), [H1](#h1).
+- **Needs:** [F6](#f6). **After:** H1.
 
 <a id="l2"></a>
 ### L2 · Find out what rbxport and Rekordbox import
@@ -392,7 +394,7 @@ directly or through a ticket it needs.
   - the tracks `quality` flagged, by issue kind.
 - **Done when:** the feature writes all three kinds of playlist to `out/` in
   the format L2 found, from existing reports, and reads nothing else.
-- **Needs:** [L2](#l2), [H1](#h1).
+- **Needs:** [L2](#l2), which needs H1.
 
 <a id="l4"></a>
 ### L4 · Import them into Rekordbox for real
@@ -413,9 +415,10 @@ directly or through a ticket it needs.
   `master.db` first, refuses to run while Rekordbox has the file open, and reads
   through `core/rekordbox_db.py`. Tag edits and moving analysis data in or out
   follow the same rules, and rbxport covers most of what they would do.
-- **Done when:** the decision is recorded as D2's outcome. If a writer is built,
-  its tests pass on H1's writer fixtures and never touch the original.
-- **Needs:** [L2](#l2), [L3](#l3), [L4](#l4), [D2](#open-decisions).
+- **Done when:** whether a writer is built is recorded in D2's row. If one is
+  built, its tests pass on H1's writer fixtures and never touch the original.
+- **Needs:** [L2](#l2), [L3](#l3), [L4](#l4). [D2](#open-decisions) is decided:
+  hand off first.
 
 ## Phases 5 and 6 — Genre enrichment, then `dig`
 
@@ -437,8 +440,10 @@ code in `core`: source adapters ([G2](#g2)) and the same-track matcher
 
 ### Phase 5 — Genre enrichment
 
-Every ticket in this phase needs [S1](#s1) and [G0](#g0), directly or through
-a ticket it needs.
+The tickets that call a source need [S1](#s1)'s cache and [G0](#g0)'s source
+table: G3, and G4 through it. G2 needs G0, which says which sources need keys,
+and S1 is an *after* for it. G1 moves code and calls no source, so for it both
+are an *after*.
 
 <a id="g1"></a>
 #### G1 · Move the matcher
@@ -446,7 +451,7 @@ a ticket it needs.
 - **Change:** `playlist_diff/matching.py` moves to `core`, as rule 1 requires.
 - **Done when:** `playlist-diff`'s output stays byte-identical on the 3,628-row
   self-playlist.
-- **Needs:** [S1](#s1), [G0](#g0).
+- **Needs:** nothing. **After:** S1, G0.
 
 <a id="g2"></a>
 #### G2 · One adapter interface in `core`
@@ -455,7 +460,7 @@ a ticket it needs.
   command falls back to whichever sources have keys.
 - **Done when:** the interface is in `core`, and a command with no keys set runs
   on the sources that need none instead of failing.
-- **Needs:** [S1](#s1), [G0](#g0). **After:** G1.
+- **Needs:** [G0](#g0). **After:** G1, S1.
 
 <a id="g3"></a>
 #### G3 · Add the sources in order
@@ -486,8 +491,11 @@ a ticket it needs.
 
 ### Phase 6 — `dig`
 
-Every ticket in this phase needs [G4](#g4), the genres of the owned tracks,
-which brings the cache ([S1](#s1)) and [G0](#g0) with it.
+Only the score, [R4](#r4), needs [G4](#g4), the genres of the owned tracks.
+The others need Phase 5's shared code instead: [R1](#r1) needs the matcher
+([G1](#g1)) and the Discogs adapter ([G3](#g3)), which brings the cache
+([S1](#s1)) and [G0](#g0) with it, and the rest need R1. Enrichment still
+comes first, as an *after*.
 
 <a id="r1"></a>
 #### R1 · Discogs and the local cross-reference first
@@ -496,7 +504,7 @@ which brings the cache ([S1](#s1)) and [G0](#g0) with it.
   one free token, and it is the half no website can do.
 - **Done when:** `dig`, seeded by a label, lists that label's releases that the
   library does not own.
-- **Needs:** [G4](#g4).
+- **Needs:** [G1](#g1), [G3](#g3). **After:** G4.
 
 <a id="r2"></a>
 #### R2 · Exclusions
@@ -506,14 +514,14 @@ which brings the cache ([S1](#s1)) and [G0](#g0) with it.
   state root.
 - **Done when:** owned and rejected records never appear in `dig`'s results, and
   the rejections persist between runs under the state root.
-- **Needs:** [R1](#r1), [G4](#g4), [S1](#s1).
+- **Needs:** [R1](#r1), [S1](#s1).
 
 <a id="r3"></a>
 #### R3 · Every result carries why it was returned
 
 - **Change:** each result shows the hops from its seed.
 - **Done when:** every row of `dig`'s report lists the hops from its seed.
-- **Needs:** [R1](#r1), [G4](#g4).
+- **Needs:** [R1](#r1).
 
 <a id="r4"></a>
 #### R4 · The underground score
@@ -530,7 +538,8 @@ which brings the cache ([S1](#s1)) and [G0](#g0) with it.
   `connect-src`, and whether those APIs allow CORS is unchecked.
 - **Done when:** each source `dig` uses in a tab is checked for CORS, and the
   origins it adds are recorded in this plan as the CSP rule asks.
-- **Needs:** [G4](#g4), [D4](#open-decisions). **After:** R1–R4.
+- **Needs:** [R1](#r1), the `dig` it would run in a tab. **After:** R2–R4.
+  [D4](#open-decisions) is decided: later, so it stays parked until then.
 
 ## Phase 7 — Serato and Traktor export
 
@@ -616,19 +625,21 @@ The top row leads to the writers and the bottom row to the network features.
 The two tracks are independent, so they can be worked in parallel, and there is
 no arrow between them. No phase has a date yet. The gates in the decisions
 table below sit inside the phases, not between the boxes. W1 is outside both
-tracks.
+tracks. An arrow is a hard need only for the tickets of its phase that use what
+it carries ([How this plan works](#how-this-plan-works)).
 
 ## Open decisions
 
 These are yours to make. Each one blocks only the tickets in its row. When one
 is made, its outcome and date go in its row, and the [log](#log) records it.
+D1–D4 were made on 2026-11-13.
 
-| Id | Decision | Options | Recommendation | Blocks |
-| --- | --- | --- | --- | --- |
-| D1 | Where persistent state lives | `%LOCALAPPDATA%\sdm`, or `./state` in the project | The per-user folder, which `SDM_STATE_DIR` can override | [S1](#s1), and through it Phases 5 and 6 |
-| D2 | Who writes playlists | sdm writes `master.db` itself, or hands off through Rekordbox XML or rbxport | Hand off first | [L5](#l5) |
-| D3 | `catalog`'s exit code for a failed audit | Any non-zero code | One that is not 2, since `--missing-metadata` already uses 2 for a path that is not a directory | [F2](#f2) |
-| D4 | `dig` in the browser build | Never, or later | Later, and only once the sources are known to allow CORS | [R5](#r5) |
+| Id | Decision | Options | Recommendation | Blocks | Outcome |
+| --- | --- | --- | --- | --- | --- |
+| D1 | Where persistent state lives | `%LOCALAPPDATA%\sdm`, or `./state` in the project | The per-user folder, which `SDM_STATE_DIR` can override | [S1](#s1), and through it Phases 5 and 6 | The per-user folder, 2026-11-13: `%LOCALAPPDATA%\sdm` on Windows, `$XDG_STATE_HOME/sdm` (by default `~/.local/state/sdm`) on Linux, and `--state-dir` or `SDM_STATE_DIR` over either |
+| D2 | Who writes playlists | sdm writes `master.db` itself, or hands off through Rekordbox XML or rbxport | Hand off first | [L5](#l5) | Hand off first, 2026-11-13. L5 records whether a writer of sdm's own is needed |
+| D3 | `catalog`'s exit code for a failed audit | Any non-zero code | One that is not 2, since `--missing-metadata` already uses 2 for a path that is not a directory | [F2](#f2) | 1, 2026-11-13 |
+| D4 | `dig` in the browser build | Never, or later | Later, and only once the sources are known to allow CORS | [R5](#r5) | Later, 2026-11-13. R5 stays parked until `dig` exists and its sources are checked for CORS |
 
 ### Risks
 
@@ -792,8 +803,9 @@ cannot have.
 - **The drive letter's case.** There are no tests to start from `c:\`.
   `sdm web` compares paths through `os.path.normcase`, so the case does not
   matter there. `catalog`'s audit compares paths as typed, which is [F1](#f1).
-- **[S1](#s1)'s default.** The proposed default, `%LOCALAPPDATA%\sdm`, names a
-  Windows folder. [D1](#open-decisions) settles its Linux equivalent too.
+- **[S1](#s1)'s default.** `%LOCALAPPDATA%\sdm` on Windows and
+  `$XDG_STATE_HOME/sdm`, by default `~/.local/state/sdm`, on Linux
+  ([D1](#open-decisions)).
 - **Line endings:** every text file is LF, in the index and on checkout
   ([EO8](#eo8)).
 
@@ -840,6 +852,14 @@ Every item in it has a home:
 
 ## Log
 
+- **2026-11-13 · plan** · D1–D4 decided: the state root is per-user on both
+  platforms, playlists are handed off first, a failed audit exits 1, and `dig`
+  comes to the browser later. F2 no longer waits on a decision. The needs now
+  follow the ecosystem's rule for needs between phases: a phase's need is a
+  hard need only for the tickets that use what the other phase delivers. L1,
+  L3, G1, G2, R1, R2, R3 and R5 lose a phase-level need, now an *after*, R1
+  needs the matcher and the Discogs adapter, and R5 needs R1, so the Project's
+  blocked-by links go from 38 to 32.
 - **2026-11-13 · EO9** · Done: the audio tools' Linux-or-WSL build is accepted
   under the ecosystem's new rule for third-party builds that need a POSIX shell.
   Every onboarding step is done.
