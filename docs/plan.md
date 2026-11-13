@@ -53,10 +53,10 @@ onboarding tickets are P2. A priority set in the Project overrides this.
 never reused or renumbered. A split ticket keeps its number and adds a letter
 (F6a, F6b). A new lane takes a prefix no lane uses, and the ecosystem's shared
 rules say what to check before adding one. **Confidential work never goes in
-this file**; the ecosystem's shared rules say where it goes. Once GitHub Issues
-are turned on ([EO5](#eo5), [EO7](#eo7)), every open ticket has exactly one
-issue, titled `<id>: <title>`, whose body links the ticket's anchor and copies
-nothing from it.
+this file**; the ecosystem's shared rules say where it goes. Every open ticket
+has exactly one GitHub issue ([EO7](#eo7)), titled `<id>: <title>`, whose body
+links the ticket's anchor and copies nothing from it. A new ticket gets its
+issue when it is added.
 
 ## Where sdm stands
 
@@ -695,7 +695,7 @@ Each step is small and independent, and can be done between feature work.
   came from either here or listed in [the table below](#where-the-docs-items-went),
   CLAUDE.md's *Planned work* points here, and no link to the Doc is left in the
   repository.
-- **Result:** done 2026-11-13. The Doc is archived once this lands.
+- **Result:** done 2026-11-13. The Doc was archived the same day.
 
 <a id="eo4"></a>
 #### EO4 · The parts the owner marked · done
@@ -706,15 +706,15 @@ Each step is small and independent, and can be done between feature work.
 - **Result:** done 2026-11-13.
 
 <a id="eo5"></a>
-#### EO5 · Turn GitHub Issues on
+#### EO5 · Turn GitHub Issues on · done
 
 - **Change:** yours. Issues are off here, as they are by default on a fork.
   Turn them on in the repository's *Settings → General → Features → Issues*.
 - **Done when:** the repository has an Issues tab.
-- **Needs:** nothing.
+- **Result:** done 2026-11-13.
 
 <a id="eo6"></a>
-#### EO6 · Point `gh` at this repository
+#### EO6 · Point `gh` at this repository · done
 
 - **Change:** this clone has an `upstream` remote, the fork's parent
   `pranjalagg/spdl`, and with no default set, `gh` picks it: `gh repo view`
@@ -723,10 +723,10 @@ Each step is small and independent, and can be done between feature work.
   this clone's `.git/config`.
 - **Done when:** `gh repo view --json nameWithOwner` here answers
   `eigenomarksamy/sdm`.
-- **Needs:** nothing.
+- **Result:** done 2026-11-13.
 
 <a id="eo7"></a>
-#### EO7 · An issue for every open ticket
+#### EO7 · An issue for every open ticket · done
 
 - **Change:** one issue per open ticket, added to the ecosystem's Project. Its
   title is `<id>: <title>`, and its body's first line links the ticket's anchor
@@ -735,9 +735,13 @@ Each step is small and independent, and can be done between feature work.
   decision stays `backlog`. This repository is public, so you see every issue's
   text before it is written.
 - **Done when:** every open ticket has exactly one issue in the Project, with
-  its blocked-by links. That is 37 tickets if EO5 and EO6 are done first: V1,
-  V3–V8, F1–F6, H1, S1, L1–L5, G0–G5, R1–R5, X1, X2, W1 and EO7–EO9.
-- **Needs:** [EO5](#eo5), [EO6](#eo6), and your approval.
+  its blocked-by links. That is 36 tickets: V1, V3–V8, F1–F6, H1, S1, L1–L5,
+  G0–G5, R1–R5, X1, X2, W1, EO8 and EO9. EO7 itself gets none, since the issues
+  are its result.
+- **Result:** done 2026-11-13. The issues are #1–#36, in this plan's order from
+  V1 to EO9, each in the Project with its status, priority and work type, and
+  the 38 blocked-by links the *needs* lines ask for. A need on a decision has no
+  link, so F2, S1, L5 and R5 stay `backlog` until it is made.
 
 <a id="eo8"></a>
 #### EO8 · Line endings in `.gitattributes`
@@ -789,14 +793,16 @@ cannot have.
 
 1. **Priorities.** Is the mapping under [How this plan works](#how-this-plan-works)
    (now P1, foundations P2, features P3) right? It is set on the issues at
-   [EO7](#eo7).
+   [EO7](#eo7). **Answered 2026-11-13:** yes, and the issues carry it.
 2. **Done-whens written for this plan.** The Doc gave a *done when* for Phases
    0, 2 and 3, a check for each of Phase 1's items, and none for the steps of
    Phases 4–7. Those of L1–L5, G0–G5, R1–R5, X1 and X2 were written here from
    each step's own text. Review them before their issues are opened.
+   **Answered 2026-11-13:** reviewed, and kept as written.
 3. **The repository's description.** GitHub still describes it as "Spotify
    Download Manager - Tool to download songs from Spotify", the deprecated
-   command. Update it to match `project.yaml`?
+   command. Update it to match `project.yaml`? **Answered 2026-11-13:** yes,
+   and GitHub's description is now `project.yaml`'s.
 
 ### Where the Doc's items went
 
@@ -826,6 +832,11 @@ Every item in it has a home:
 
 ## Log
 
+- **2026-11-13 · onboarding** · EO5–EO7 done: Issues are on, `gh` in this
+  clone points here, and every open ticket has its issue in the ecosystem's
+  GitHub Project, #1–#36, with its priority and its blocked-by links. The Doc is
+  archived. The priorities and this plan's done-whens are confirmed, and
+  GitHub's description matches `project.yaml`. EO8 and EO9 are open.
 - **2026-11-13 · plan** · This plan moved here from a Claude Doc (created
   2026-11-03), which is retired. Its phases 0–7 are the V, F, H, S, L, G, R and
   X tickets, its open decisions are D1–D4, and
