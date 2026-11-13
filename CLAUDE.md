@@ -1,3 +1,5 @@
+@../meta-eigenomar/standards/claude-ecosystem.md
+
 # CLAUDE.md
 
 Guidance for Claude Code when working in this repository.
@@ -54,6 +56,8 @@ parked, not condemned.
 | `wrangler.jsonc` | Cloudflare Workers config serving `dist/` at sdm.eigenomar.com. `.wrangler/` is its gitignored state |
 | `docs/rekordbox.md` | Detailed Rekordbox reference |
 | `docs/analyze.md` | Detailed ANLZ / phrase-analysis reference |
+| `docs/plan.md` | The plan: Phases 0–7 as tickets, the open decisions, and the ecosystem onboarding. See "Planned work" |
+| `project.yaml` | The repository's manifest for the eigenomar ecosystem: where the plan and the other documents are |
 | `legacy/` | Superseded code, not imported, not expected to run |
 | `deprecated/`, `out/`, `tmp/` | Untracked scratch (gitignored) |
 
@@ -673,8 +677,7 @@ identical in every measured and claimed column.
 track, true peak a third of it (ebur128's 4x oversampling; dropping it saves
 ~30% of wall time). But 8 jobs on 8 cores gave only 1.3–2.5x over serial, and
 not because of the GIL: plain `ffmpeg → NUL` scaled the same. The antivirus
-(`fmservice64`) used ~2.5 cores scanning every file ffmpeg opened while total
-CPU sat at 38%. More `--jobs` will not help past ~4 here; `--limit` samples.
+used ~2.5 cores scanning every file ffmpeg opened while total CPU sat at 38%. More `--jobs` will not help past ~4 here; `--limit` samples.
 
 `--output-csv` requires a value here, while `rekordbox --export-csv` accepts the
 bare flag. That asymmetry is deliberate: this parser has a positional
@@ -1309,14 +1312,13 @@ the end of `README.md` for what each one is and why. Nothing named there exists
 in the tree; do not read a mention of one as a module to import or extend.
 (Another, a deeper `sdm quality`, is built; see its section above.)
 
-**The order of work is in a dev plan kept outside the tree**, as a Claude Doc:
-<https://claude.ai/artifact/HChzudLDtjn1k63wAEGDiP> (created 2026-11-03,
-private to its owner). It puts the open verification gaps, the known debt, a
-regression harness, a persistent state root and the ideas below into Phases
-0–7, and lists the decisions still open. Read it with the Claude Docs tools,
-not a web fetch, before planning or starting any of that work. It is edited
-outside git, so this pointer cannot say what it holds now. It is a plan, not
-state: where it and this file disagree about what exists, this file wins.
+**The order of work is in [docs/plan.md](docs/plan.md).** It puts the open
+verification gaps, the known debt, a regression harness, a persistent state root
+and the ideas below into Phases 0–7 as tickets, each with what it needs and when
+it is done, and lists the decisions still open. Read it before planning or
+starting any of that work, and keep its tickets and their GitHub issues in step.
+It is a plan, not state: where it and this file disagree about what exists,
+this file wins.
 
 1. **Library manager** — Rekordbox playlists, bulk tag/metadata edits, analysis
    import/export. New feature package; playlists first, because they are plain

@@ -1,0 +1,35 @@
+schema_version: 1
+
+# sdm's manifest for the eigenomar ecosystem: what this repository is and where
+# its documents are. It points at documents; it holds none of their content.
+
+id: sdm
+name: sdm
+description: a music-library toolchain for a DJ workflow, covering cataloguing, duplicates by sound, Rekordbox and Pioneer USB analysis, audio quality and Spotify playlists, from the command line, a local web page or a browser tab
+status: active
+tags: [python, typescript, react, vite, pyodide, webassembly, emscripten, ffmpeg, chromaprint, rekordbox, spotify-api, cloudflare-workers]
+
+links:
+  deployment: https://sdm.eigenomar.com
+
+documents:
+  plan: docs/plan.md
+  architecture: [CLAUDE.md, README.md#layout, docs/rekordbox.md, docs/analyze.md]
+  engineering: [CLAUDE.md#commands, CLAUDE.md#conventions, README.md#install, README.md#build-and-deploy]
+  decisions:                       # the rules already decided, then the decisions still open
+    - CLAUDE.md#the-two-architectural-rules
+    - CLAUDE.md#planned-work
+    - docs/plan.md#rules-every-phase-keeps
+    - docs/plan.md#open-decisions
+
+delivery:
+  ci: none                         # docs/plan.md, "Linux and other portability notes"
+  releases: none                   # the version is in pyproject.toml
+  deployment: cloudflare           # Workers static assets from dist/, built by build_browser.py
+  deploys_on: merge                # Cloudflare's build deploys every push to main
+
+artifacts:
+  diagrams: docs/plan.md#sequence-and-dependencies
+  test_reports: null               # no test suite; measured baselines are in CLAUDE.md
+  coverage: null
+  monitoring: null
