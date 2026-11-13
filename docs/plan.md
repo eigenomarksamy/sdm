@@ -756,7 +756,7 @@ Each step is small and independent, and can be done between feature work.
   text files in the index were LF already.
 
 <a id="eo9"></a>
-#### EO9 · The audio tools build only on Linux or WSL
+#### EO9 · The audio tools build only on Linux or WSL · done
 
 - **Gap:** `wasm/build.sh` is the only way to build `wasm/prebuilt/`, and it
   runs only on Linux or in WSL, with its pinned Emscripten installed in WSL. The
@@ -766,8 +766,15 @@ Each step is small and independent, and can be done between feature work.
   needs it.
 - **Done when:** `build.sh` follows the ecosystem's rule for native builds, or
   this plan records the gap as accepted under that rule.
-- **Needs:** the ecosystem conventions' rule for native builds, which is not
-  written yet.
+- **Needs:** the ecosystem conventions' rule for native builds.
+- **Result:** done 2026-11-13. The ecosystem's portability conventions now let
+  a third-party library whose own build system needs a POSIX shell, as FFmpeg's
+  `configure` does, be built on Linux or in WSL, when its outputs are committed
+  with a record of what they were built from and the repository's own build
+  checks that record. `wasm/prebuilt/` is committed, `stamp.json` records its
+  sources, `build_browser.py` refuses to ship the modules once one of them has
+  changed, and the README says how to run `build.sh`. So the gap is accepted
+  under that rule, and `build.sh` stays as it is.
 
 ### Linux and other portability notes
 
@@ -833,6 +840,9 @@ Every item in it has a home:
 
 ## Log
 
+- **2026-11-13 · EO9** · Done: the audio tools' Linux-or-WSL build is accepted
+  under the ecosystem's new rule for third-party builds that need a POSIX shell.
+  Every onboarding step is done.
 - **2026-11-13 · EO8** · Done: `.gitattributes` has `* text=auto eol=lf`, and
   the renormalize staged nothing.
 - **2026-11-13 · onboarding** · EO5–EO7 done: Issues are on, `gh` in this
