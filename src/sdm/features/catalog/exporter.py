@@ -150,6 +150,10 @@ def find_repeated(csv_path):
 
 def run(directory, output_csv=None):
     """Export, then report duplicates, then cross-validate. Returns an exit code."""
+    # Normalize once, up front: the sidecar records paths as the walk spells
+    # them, and the audit compares them with abspath'd ones, so "C:/x" or a
+    # relative path would otherwise fail every file as both missing and extra.
+    directory = os.path.abspath(directory)
     folder_name = os.path.basename(os.path.normpath(directory))
     output_csv = resolve_output(output_csv, "catalog", f"mp3_file_list_{folder_name}.csv")
     # The sidecar stays beside its CSV wherever that ended up — the two are

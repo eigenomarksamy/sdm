@@ -427,14 +427,15 @@ Handles `.mp3` only, not the full `AUDIO_EXTS` set.
 reports `is_valid: False` — the audit is printed, never signalled. A script
 cannot currently gate on it.
 
-**Pre-existing bug — pass Windows-style paths.** The sidecar records
-`os.path.join(root, filename)`, which keeps whatever separator style you typed,
-but `validate_mp3_csv` compares against `os.path.abspath(...)`, which normalizes
-to backslashes. So `sdm catalog "C:/Users/.../postmodern"` reports every file as
-both missing and extra (`is_valid: False`), while
-`sdm catalog "C:\Users\...\postmodern"` reports `is_valid: True`. Same in the
-pre-refactor code. If cross-validation reports a total mismatch, check the path
-style before hunting for a real fault.
+**Any path style works.** `exporter.run` makes the directory absolute before
+anything else, so the sidecar records the same `os.path.abspath` spelling that
+`validate_mp3_csv` compares against. Forward slashes, backslashes, a trailing
+separator and a relative path give byte-identical CSVs and sidecars, all
+`is_valid: True`, and the sidecar always holds absolute paths. Before this fix
+the sidecar kept the separators as typed, so `sdm catalog "C:/…/postmodern"` or
+a relative path reported every file as both missing and extra. Keep the
+normalization at the top of `run`: the export and the audit must see one
+spelling.
 
 **`--missing-metadata` is a second mode, not a fourth step.** It skips the
 export entirely and runs `missing_metadata.run`: list every audio file whose

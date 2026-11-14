@@ -67,7 +67,7 @@ in `sdm web`, and in the browser build. The tree has 110 tracked files, version
 
 | Command | Status | What is still open | Tickets |
 | --- | --- | --- | --- |
-| `catalog` | partial | A path typed with forward slashes fails cross-validation. A failed audit still exits 0. The export reads `.mp3` only | [F1](#f1), [F2](#f2). The `.mp3`-only export is deferred ([Phase 1](#deferred-on-purpose)) |
+| `catalog` | partial | A failed audit still exits 0. The export reads `.mp3` only | [F2](#f2). The `.mp3`-only export is deferred ([Phase 1](#deferred-on-purpose)) |
 | `duplicates` | done | Nothing. Baseline: 158 groups from 3,664 files in 9m12s | — |
 | `rekordbox` | partial | No borrowed fpcalc and no pre-flight. Cannot read `export.pdb`. Artists are blank on a run from the local database alone. `analysis.py` is dead code | [F3](#f3), [F6](#f6), [F4](#f4). Blank artists have no ticket: attaching the USB fills them (CLAUDE.md) |
 | `analyze` | done | Cue points and waveforms are skipped on purpose | — |
@@ -205,7 +205,7 @@ the last gap shared by `quality` and `rekordbox`. Do the small ones first, in
 the order listed. Each ticket's check is its *done when*.
 
 <a id="f1"></a>
-### F1 · Forward-slash paths fail the audit
+### F1 · Forward-slash paths fail the audit · done
 
 - **Where:** `features/catalog/`.
 - **Change:** normalize the directory argument once, at the start, so the
@@ -215,6 +215,11 @@ the order listed. Each ticket's check is its *done when*.
   backslashes produce byte-identical CSVs and sidecars, and both report
   `is_valid: True`.
 - **Needs:** nothing.
+- **Result:** done on 2026-11-14. `exporter.run` makes the directory absolute
+  first. On a 17-file folder, forward slashes, backslashes, a trailing slash,
+  `aquarius` and `./aquarius` gave byte-identical CSVs and sidecars, all
+  `is_valid: True`. The backslash run is byte-identical to the one before the
+  fix. Before it, the forward-slash and relative runs failed the audit.
 
 <a id="f2"></a>
 ### F2 · A failed audit exits 0
@@ -852,6 +857,10 @@ Every item in it has a home:
 
 ## Log
 
+- **2026-11-14 · F1** · Done: `catalog` makes its directory absolute before the
+  export, so any path style passes the audit. A relative path failed the same
+  way as forward slashes, and is fixed by the same line. The sidecar now always
+  holds absolute paths.
 - **2026-11-13 · plan** · D1–D4 decided: the state root is per-user on both
   platforms, playlists are handed off first, a failed audit exits 1, and `dig`
   comes to the browser later. F2 no longer waits on a decision. The needs now

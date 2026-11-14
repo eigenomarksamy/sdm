@@ -59,11 +59,11 @@ parts.
 | | `--pre-order`, `--sync`, `--run-pp` | Playlist order; folder-to-playlist sync; post-processing | The flags | stub — parsed, never acted on |
 | | Exit code | Should report whether the run succeeded | — | partial — `run()` returns `None`, so always 0 |
 | | SHA-256 duplicate remover | Deletes byte-identical copies in a tree | A directory | stub — never called, and prompts via `input()`. `duplicates` supersedes it |
-| `catalog` | *(the command)* | An **auditable** MP3 catalog: an export, a duplicate report, and a proof the export is complete | A directory, `--output-csv`. **Use backslashes** | partial |
+| `catalog` | *(the command)* | An **auditable** MP3 catalog: an export, a duplicate report, and a proof the export is complete | A directory, `--output-csv` | partial |
 | | CSV export | Index, filename, track name and artist per file, tags via eyed3 | The directory, walked recursively | done |
 | | Path sidecar | Every path the export visited, one per line, beside the CSV | The same walk | done |
 | | Duplicate report | Groups rows normalizing to the same title and artist, mix suffixes stripped first | The CSV it just wrote | done |
-| | Cross-validation | Re-walks the directory and set-diffs it against the sidecar | The directory and the sidecar | partial — a forward-slash argument reports **every** file as both missing and extra |
+| | Cross-validation | Re-walks the directory and set-diffs it against the sidecar | The directory and the sidecar | done — any path style, the directory is made absolute first |
 | | Unreadable tags | Reported per file rather than aborting the export | — | done |
 | | Missing metadata | Lists every track whose tags lack a title, an artist, or both — every audio format, not just MP3 — telling an untagged file from an unreadable one | `--missing-metadata` | done |
 | | Non-MP3 files | The rest of `AUDIO_EXTS` | — | planned — `.mp3` only |
@@ -305,11 +305,9 @@ Then prints:
    `is_valid: True` — the guarantee this feature exists to provide.
 
 Use `--output-csv PATH` to control the destination; the sidecar name is derived
-from it, and the two always stay together.
-
-> Pass the folder with **backslashes**. Cross-validation compares the sidecar's
-> paths against normalized absolute paths, so a forward-slash argument makes
-> every file look both missing and extra. A long-standing quirk, not a new one.
+from it, and the two always stay together. The folder may be typed with forward
+slashes, backslashes or as a relative path: it is made absolute first, so the
+sidecar always holds absolute paths.
 
 ### Missing metadata
 
