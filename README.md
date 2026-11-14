@@ -67,7 +67,7 @@ parts.
 | | Unreadable tags | Reported per file rather than aborting the export | — | done |
 | | Missing metadata | Lists every track whose tags lack a title, an artist, or both — every audio format, not just MP3 — telling an untagged file from an unreadable one | `--missing-metadata` | done |
 | | Non-MP3 files | The rest of `AUDIO_EXTS` | — | planned — `.mp3` only |
-| | Exit code reflects the audit | Should fail the command when `is_valid` is false | — | stub — always 0, so a failed audit cannot gate a script |
+| | Exit code reflects the audit | Fails the command when `is_valid` is false | — | done — 1 for a failed audit, 0 for a clean one |
 | `duplicates` | *(the command)* | Finds duplicates in a folder by what tracks **sound like** — catching renamed copies and mp3/flac pairs that name, size and hash checks miss. **Read-only** | A directory, searched recursively | done |
 | | Walk and tag read | Collects audio files and reads BPM, key and duration across ID3, Vorbis and MP4 | The directory | done |
 | | Duration prefilter | Buckets tracks of similar length — the one dimension always present, since it is decoded not tagged | `--duration-tolerance` | done |

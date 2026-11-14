@@ -173,4 +173,7 @@ def run(directory, output_csv=None):
             print(i)
     print(validation)
 
-    return 0
+    # The audit is the point of this command, so a failed one fails the run:
+    # 1, not 2, which --missing-metadata already uses for a path that is not a
+    # directory (plan, D3).
+    return 0 if validation["is_valid"] else 1

@@ -423,9 +423,11 @@ this is an auditable export, not a dump. Preserve that property.
 
 Handles `.mp3` only, not the full `AUDIO_EXTS` set.
 
-`exporter.run` returns 0 unconditionally, including when `validate_mp3_csv`
-reports `is_valid: False` — the audit is printed, never signalled. A script
-cannot currently gate on it.
+**A failed audit exits 1.** `exporter.run` returns 0 when `validate_mp3_csv`
+reports `is_valid: True` and 1 otherwise, so a script can gate on it, and
+`sdm web` and the browser build show the job as failed. 1, not 2, because
+`--missing-metadata` uses 2 for a path that is not a directory (plan, D3). The
+audit itself is still printed either way.
 
 **Any path style works.** `exporter.run` makes the directory absolute before
 anything else, so the sidecar records the same `os.path.abspath` spelling that

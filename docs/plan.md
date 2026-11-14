@@ -67,7 +67,7 @@ in `sdm web`, and in the browser build. The tree has 110 tracked files, version
 
 | Command | Status | What is still open | Tickets |
 | --- | --- | --- | --- |
-| `catalog` | partial | A failed audit still exits 0. The export reads `.mp3` only | [F2](#f2). The `.mp3`-only export is deferred ([Phase 1](#deferred-on-purpose)) |
+| `catalog` | partial | The export reads `.mp3` only | None: the `.mp3`-only export is deferred ([Phase 1](#deferred-on-purpose)) |
 | `duplicates` | done | Nothing. Baseline: 158 groups from 3,664 files in 9m12s | — |
 | `rekordbox` | partial | No borrowed fpcalc and no pre-flight. Cannot read `export.pdb`. Artists are blank on a run from the local database alone. `analysis.py` is dead code | [F3](#f3), [F6](#f6), [F4](#f4). Blank artists have no ticket: attaching the USB fills them (CLAUDE.md) |
 | `analyze` | done | Cue points and waveforms are skipped on purpose | — |
@@ -222,7 +222,7 @@ the order listed. Each ticket's check is its *done when*.
   fix. Before it, the forward-slash and relative runs failed the audit.
 
 <a id="f2"></a>
-### F2 · A failed audit exits 0
+### F2 · A failed audit exits 0 · done
 
 - **Where:** `catalog/exporter.run`.
 - **Change:** return 1 when `is_valid` is false, so a script can gate on it
@@ -230,6 +230,12 @@ the order listed. Each ticket's check is its *done when*.
 - **Done when:** a tampered sidecar exits 1, a clean run exits 0, and an
   `sdm web` job shows the failure.
 - **Needs:** nothing, since D3 is decided. **After:** F1.
+- **Result:** done on 2026-11-14. `exporter.run` returns 1 when `is_valid` is
+  false. With one bogus path added to the sidecar after the export wrote it,
+  the CLI exited 1 and an `sdm web` job ended `failed` with exit code 1. The
+  clean run exited 0, its job `succeeded`, and its CSV is byte-identical to
+  F1's. `--missing-metadata` still exits 0, and 2 for a path that is not a
+  directory.
 
 <a id="f3"></a>
 ### F3 · `rekordbox` needs fpcalc on PATH
@@ -857,6 +863,8 @@ Every item in it has a home:
 
 ## Log
 
+- **2026-11-14 · F2** · Done: a failed `catalog` audit exits 1, as D3 decided,
+  so a script can gate on it and both front ends show the job as failed.
 - **2026-11-14 · F1** · Done: `catalog` makes its directory absolute before the
   export, so any path style passes the audit. A relative path failed the same
   way as forward slashes, and is fixed by the same line. The sidecar now always
