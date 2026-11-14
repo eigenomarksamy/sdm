@@ -62,9 +62,11 @@ The CSV/JSON output records which rule(s) matched for each group
    pip install -e ".[rekordbox]"
    ```
 
-2. (Audio mode only) Install `fpcalc` (chromaprint) and put it on PATH. Download
-   the Windows build from <https://acoustid.org/chromaprint> and unzip somewhere
-   on PATH, or pass `--fpcalc-path` at runtime.
+2. (Audio mode only, optional) Install `fpcalc` (chromaprint) and put it on
+   PATH. Download the Windows build from <https://acoustid.org/chromaprint> and
+   unzip somewhere on PATH, or pass `--fpcalc-path` at runtime. Without one, the
+   run borrows a pinned build into `tmp/` and deletes it when it ends;
+   `--no-fetch-fpcalc` fails instead.
 
 3. Rekordbox must be (or have been) installed on this machine. `pyrekordbox`
    extracts the SQLCipher key for `master.db` from your local Rekordbox config.
@@ -130,6 +132,7 @@ sdm rekordbox --db-path "C:/path/to/master.db" --output-dir ./out
 | `--fingerprint-threshold` | `0.85` | Min chromaprint similarity (0..1) to confirm a duplicate. |
 | `--skip-fingerprint` | off | Skip the fingerprint stage; report on the metadata prefilter alone. |
 | `--fpcalc-path` | — | Path to the `fpcalc` binary if it isn't on PATH. |
+| `--no-fetch-fpcalc` | off | Fail instead of borrowing a temporary `fpcalc` when none is installed. |
 
 ## Output
 

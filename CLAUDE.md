@@ -96,7 +96,7 @@ pip install -e ".[all]"       # or .[rekordbox] / .[quality] / bare
 
 sdm catalog "C:\Music\postmodern"
 sdm catalog "F:\Songs" --missing-metadata   # tracks lacking a title/artist
-sdm duplicates "F:/Songs"            # needs fpcalc on PATH
+sdm duplicates "F:/Songs"            # borrows fpcalc if none is installed
 sdm duplicates "F:/Songs" --skip-fingerprint   # sizing run only, see below
 sdm rekordbox --usb-path D:/ --duplicates-by-name
 sdm analyze D:/                      # beat grids + phrases, no database needed
@@ -118,8 +118,8 @@ npx wrangler dev                          # serves dist/ with _headers, http://1
 `pyproject.toml` is the only dependency manifest — there is no `requirements.txt`.
 It does not tell the whole story though: fingerprinting needs the `fpcalc`
 binary and `sdm quality` needs `ffprobe`/`ffmpeg`, neither of which pip can
-install. (`sdm duplicates` borrows a temporary `fpcalc` when none is
-installed — see `core/fpcalc_fetch.py` — but `sdm rekordbox` does not.) Both are documented in a comment at the bottom of `pyproject.toml`.
+install. (`sdm duplicates` and `sdm rekordbox` borrow a temporary `fpcalc`
+when none is installed — see `core/fpcalc_fetch.py`.) Both are documented in a comment at the bottom of `pyproject.toml`.
 pyacoustid is deliberately *not* a dependency — see `core/fingerprint.py`.
 
 There is no test suite, linter config, or CI. Verify changes by running the
@@ -489,9 +489,12 @@ candidate pairs which union-find then chained into one group of 3,297. Use it to
 see how big a run will be; do not read its groups as duplicates.
 
 The run fingerprints every eligible track once. `command.py` pre-flights
-`PREFLIGHT_TRACKS` files first — without `fpcalc` every pair is dropped and the
+`PREFLIGHT_TRACKS` files first, through `core.duplicates.fingerprint_preflight`,
+which `rekordbox` shares — without `fpcalc` every pair is dropped and the
 run would otherwise end with a meaningless "0 duplicate groups". More than one
-file is tried so a single corrupt track cannot abort a healthy run. The
+file is tried so a single corrupt track cannot abort a healthy run, and only
+files that exist are tried, since a Rekordbox library can list files that are
+not on this disk. The
 pre-flight swallows the `RuntimeError` that `compute` raises for a missing
 binary: at that one point "no binary" and "nothing fingerprinted" are the same
 answer, and that is what keeps a missing fpcalc an error message rather than a
@@ -502,8 +505,8 @@ traceback.
 one and otherwise downloads a temporary one into `tmp/` for the run and deletes
 it afterwards. `--no-fetch-fpcalc` opts out and fails instead. The binary is
 resolved once for the run, so **everything that fingerprints must stay inside
-that `with` block** — leaving it deletes the binary. `sdm rekordbox` is not
-wired to it yet and still needs fpcalc on PATH.
+that `with` block** — leaving it deletes the binary. `sdm rekordbox` does the
+same, with the same flag and the same pre-flight.
 
 **Measured baseline** (`test-sdm-lib-clone/pioneer-usb-full-clone`, 3,664 files):
 9m12s wall, 64,157 candidate pairs, 178 confirmed, **158 groups** (148 pairs, 10

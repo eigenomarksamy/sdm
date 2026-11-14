@@ -82,7 +82,7 @@ parts.
 | | Source resolution | USB `master.db`, then the local one scoped to the USB (the only source with analyzed BPM and key), then raw ID3 tags | `--usb-path`, `--db-path` | done |
 | | Track export | Title, artist, BPM, duration and key to CSV | `--export-csv`, bare or with a path | done |
 | | Duplicates by name | Title and artist alone, so it covers every track and needs no analysis | `--duplicates-by-name` | partial — blank artists on a local-DB-only run; attaching the USB fills them |
-| | Duplicates by fingerprint | The detector `duplicates` uses, with BPM and key required | Tolerance and threshold flags | partial — needs `fpcalc` on PATH; no borrowing, no pre-flight |
+| | Duplicates by fingerprint | The detector `duplicates` uses, with BPM and key required | Tolerance and threshold flags, `--fpcalc-path`, `--no-fetch-fpcalc` | done — borrows `fpcalc` when none is installed, and pre-flights it, as `duplicates` does |
 | | Reading the exported database | `export.pdb` / `exportLibrary.db` off the USB | — | planned — encrypted DeviceSQL, skipped |
 | | `analysis.py` | An older hand-rolled ANLZ parser | — | stub — unimported and wrong; superseded by `core/anlz.py`. Deletion candidate |
 | | Playlists | Reading and managing them | — | planned |
@@ -147,10 +147,10 @@ Requires Python 3.9+. Two features need external binaries on PATH:
 ([chromaprint](https://acoustid.org/chromaprint)) for fingerprint-based
 duplicate detection.
 
-`sdm duplicates` is the exception: if no `fpcalc` is installed it borrows one
-for the run — downloaded into `tmp/`, used, and deleted again when the command
-exits — so it works with nothing on PATH. `sdm rekordbox` still needs a real
-installation for its fingerprint stage.
+`sdm duplicates` and `sdm rekordbox` are the exception: if no `fpcalc` is
+installed they borrow one for the run — downloaded into `tmp/`, used, and
+deleted again when the command exits — so they work with nothing on PATH.
+`--no-fetch-fpcalc` fails instead of downloading.
 
 ```ps1
 sdm --help

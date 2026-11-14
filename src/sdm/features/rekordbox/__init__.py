@@ -52,6 +52,10 @@ def add_parser(subparsers, parents=()) -> argparse.ArgumentParser:
         help="Skip the fingerprint stage; report on metadata prefilter alone.",
     )
     p.add_argument("--fpcalc-path", help="Path to fpcalc binary if not on PATH.")
+    p.add_argument("--no-fetch-fpcalc", action="store_true",
+                   help="Do not download a temporary fpcalc when none is "
+                        "installed; fail instead. The download is used only for "
+                        "the run and deleted again when it ends.")
     p.set_defaults(handler=_run)
     return p
 

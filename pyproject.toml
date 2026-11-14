@@ -48,7 +48,8 @@ all = [
 # and `sdm rekordbox` without --duplicates-by-name) shells out to `fpcalc` from
 # Chromaprint, and `sdm quality` to `ffprobe`/`ffmpeg`. Both are binaries that
 # have to be on PATH; pip cannot install them, so they are documented here
-# rather than declared above.
+# rather than declared above. The two fingerprinting commands borrow a
+# temporary fpcalc for the run when none is installed.
 #
 #   fpcalc   https://github.com/acoustid/chromaprint/releases
 #   ffmpeg   https://ffmpeg.org/download.html

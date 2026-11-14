@@ -69,7 +69,7 @@ in `sdm web`, and in the browser build. The tree has 110 tracked files, version
 | --- | --- | --- | --- |
 | `catalog` | partial | The export reads `.mp3` only | None: the `.mp3`-only export is deferred ([Phase 1](#deferred-on-purpose)) |
 | `duplicates` | done | Nothing. Baseline: 158 groups from 3,664 files in 9m12s | — |
-| `rekordbox` | partial | No borrowed fpcalc and no pre-flight. Cannot read `export.pdb`. Artists are blank on a run from the local database alone. `analysis.py` is dead code | [F3](#f3), [F6](#f6), [F4](#f4). Blank artists have no ticket: attaching the USB fills them (CLAUDE.md) |
+| `rekordbox` | partial | Cannot read `export.pdb`. Artists are blank on a run from the local database alone. `analysis.py` is dead code | [F6](#f6), [F4](#f4). Blank artists have no ticket: attaching the USB fills them (CLAUDE.md) |
 | `analyze` | done | Cue points and waveforms are skipped on purpose | — |
 | `quality` | done | The Rekordbox columns are blank for a USB without the local library behind it, because `export.pdb` is unread | [F6](#f6) |
 | `playlist-diff` | done | No saved login in the CLI or `sdm web`. Spotify only serves playlists you own or collaborate on | [S1](#s1). The second is Spotify's rule |
@@ -238,7 +238,7 @@ the order listed. Each ticket's check is its *done when*.
   directory.
 
 <a id="f3"></a>
-### F3 · `rekordbox` needs fpcalc on PATH
+### F3 · `rekordbox` needs fpcalc on PATH · done
 
 - **Where:** `features/rekordbox/command.py`.
 - **Change:** wrap detection in `borrowed_fpcalc` and run the pre-flight the way
@@ -246,6 +246,14 @@ the order listed. Each ticket's check is its *done when*.
 - **Done when:** with no fpcalc installed, the report is byte-identical to a run
   with fpcalc installed, and `tmp/` is empty afterwards.
 - **Needs:** nothing. **After:** F2.
+- **Result:** done on 2026-11-14. The pre-flight moved to `core.duplicates`
+  (rule 1), shared by both commands, and tries only tracks whose file exists.
+  `rekordbox` gained `--no-fetch-fpcalc`, as `duplicates` has. On the local
+  library (3,514 tracks, 290 candidate pairs, 492 fingerprinted, 6 groups), the
+  run with no fpcalc borrowed one and wrote a CSV and JSON byte-identical to the
+  run with fpcalc 1.6.1 on PATH, and left nothing of its own in `tmp/`. With
+  `--no-fetch-fpcalc` it exits 1 with the pre-flight's message. `duplicates`'
+  reports, exit codes and message are byte-identical to before.
 
 <a id="f4"></a>
 ### F4 · Dead ANLZ parser
@@ -863,6 +871,9 @@ Every item in it has a home:
 
 ## Log
 
+- **2026-11-14 · F3** · Done: `rekordbox` borrows fpcalc when none is
+  installed, and pre-flights it, through the pre-flight `duplicates` used, now
+  in `core.duplicates`. It also gained `--no-fetch-fpcalc`.
 - **2026-11-14 · F2** · Done: a failed `catalog` audit exits 1, as D3 decided,
   so a script can gate on it and both front ends show the job as failed.
 - **2026-11-14 · F1** · Done: `catalog` makes its directory absolute before the

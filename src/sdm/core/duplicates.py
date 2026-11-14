@@ -24,10 +24,11 @@ in a pair happen to carry a BPM, it is checked as a cheap extra discriminator.
 """
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
-from itertools import combinations
-from typing import Callable, Iterable, Optional
+from itertools import combinations, islice
+from typing import Callable, Iterable, Optional, Sequence
 
 from sdm.core.fingerprint import Fingerprint, similarity
 from sdm.core.grouping import UnionFind
@@ -57,6 +58,51 @@ class DetectionConfig:
     require_bpm: bool = True
     fingerprint_threshold: float = 0.85
     skip_fingerprint: bool = False
+
+
+#: How many tracks the pre-flight tries before calling fingerprinting broken.
+#: More than one, so a single corrupt file does not abort an otherwise fine run.
+PREFLIGHT_TRACKS = 5
+
+
+def fingerprint_preflight(
+    tracks: Sequence[Track],
+    fingerprint_fn: Callable[[Track], Optional[Fingerprint]],
+) -> Optional[str]:
+    """Check that fingerprinting works before a run relies on it.
+
+    Returns None if any of the first few tracks fingerprints, or the error
+    message to print if none does. Without fpcalc every fingerprint comes back
+    None, every pair is dropped, and the run ends with "0 duplicate groups": a
+    clean bill of health that means nothing. This catches it in seconds, not
+    hours.
+
+    Only tracks whose file exists are tried, since a Rekordbox library can list
+    files that are not on this disk, and that says nothing about fpcalc. A
+    missing binary raises out of `compute` rather than returning None; both mean
+    "this run cannot fingerprint anything", so both get the one message, as an
+    error message rather than a traceback.
+    """
+    if not tracks:
+        return None  # nothing to fingerprint, so nothing has failed
+    tried = list(islice((t for t in tracks if os.path.isfile(t.file_path)), PREFLIGHT_TRACKS))
+    if not tried:
+        return (
+            "error: none of the tracks' files is on this disk, so nothing can be "
+            "fingerprinted. Use --skip-fingerprint to report metadata candidates "
+            "instead."
+        )
+    try:
+        if any(fingerprint_fn(t) is not None for t in tried):
+            return None
+    except RuntimeError:
+        pass
+    return (
+        f"error: could not fingerprint any of the first {len(tried)} track(s). "
+        "Check that the fpcalc binary is installed and on PATH (or pass "
+        "--fpcalc-path). Use --skip-fingerprint to report metadata candidates "
+        "instead."
+    )
 
 
 def find_duplicates(

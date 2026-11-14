@@ -9,8 +9,10 @@ from sdm.core.duplicates import (
     DetectionConfig,
     find_duplicates,
     find_duplicates_by_name,
+    fingerprint_preflight,
 )
 from sdm.core.fingerprint import Fingerprint, compute as compute_fingerprint
+from sdm.core.fpcalc_fetch import borrowed_fpcalc
 from sdm.core.paths import out_dir, resolve_output
 from sdm.core.report import ensure_dir, write_csv, write_duplicate_report
 from sdm.features.rekordbox.reader import Track, load_tracks, resolve_db_path
@@ -50,20 +52,35 @@ def run(args: argparse.Namespace) -> int:
             skip_fingerprint=args.skip_fingerprint,
         )
 
-        def fingerprint_fn(t: Track) -> Optional[Fingerprint]:
-            return compute_fingerprint(t.file_path, fpcalc_path=args.fpcalc_path)
+        # As in `sdm duplicates`: fpcalc is resolved once for the run, and a
+        # borrowed one is deleted when the block exits, so everything that
+        # fingerprints stays inside it.
+        with borrowed_fpcalc(
+            args.fpcalc_path,
+            allow_download=not config.skip_fingerprint and not args.no_fetch_fpcalc,
+            log=lambda msg: print(msg),
+        ) as fpcalc_path:
 
-        try:
-            groups = find_duplicates(
-                tracks,
-                config,
-                fingerprint_fn=None if config.skip_fingerprint else fingerprint_fn,
-                progress=lambda msg: print(msg),
-            )
-        except RuntimeError as exc:
-            # No fpcalc: a message, as `sdm duplicates` gives, not a traceback.
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
+            def fingerprint_fn(t: Track) -> Optional[Fingerprint]:
+                return compute_fingerprint(t.file_path, fpcalc_path=fpcalc_path)
+
+            if not config.skip_fingerprint:
+                error = fingerprint_preflight(tracks, fingerprint_fn)
+                if error:
+                    print(error, file=sys.stderr)
+                    return 1
+
+            try:
+                groups = find_duplicates(
+                    tracks,
+                    config,
+                    fingerprint_fn=None if config.skip_fingerprint else fingerprint_fn,
+                    progress=lambda msg: print(msg),
+                )
+            except RuntimeError as exc:
+                # fpcalc went missing mid-run. Say so once rather than per file.
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
 
     print(f"found {len(groups)} duplicate group(s)")
 

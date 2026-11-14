@@ -12,17 +12,13 @@ import os
 import sys
 from typing import Optional
 
-from sdm.core.duplicates import DetectionConfig, find_duplicates
+from sdm.core.duplicates import DetectionConfig, find_duplicates, fingerprint_preflight
 from sdm.core.fingerprint import Fingerprint, compute as compute_fingerprint
 from sdm.core.fpcalc_fetch import borrowed_fpcalc
 from sdm.core.paths import out_dir
 from sdm.core.report import ensure_dir, write_duplicate_report
 from sdm.core.tags import tracks_from_files
 from sdm.core.track import Track, iter_audio_files
-
-#: How many tracks the pre-flight tries before calling fingerprinting broken.
-#: More than one, so a single corrupt file does not abort an otherwise fine run.
-PREFLIGHT_TRACKS = 5
 
 
 def run(args: argparse.Namespace) -> int:
@@ -61,18 +57,11 @@ def run(args: argparse.Namespace) -> int:
         def fingerprint_fn(t: Track) -> Optional[Fingerprint]:
             return compute_fingerprint(t.file_path, fpcalc_path=fpcalc_path)
 
-        # Pre-flight. Without fpcalc every fingerprint comes back None, every
-        # pair is dropped, and the run ends with "0 duplicate groups" — a clean
-        # bill of health that means nothing. Catch it in seconds, not hours.
-        if not config.skip_fingerprint and not _fingerprint_works(tracks, fingerprint_fn):
-            print(
-                "error: could not fingerprint any of the first "
-                f"{min(PREFLIGHT_TRACKS, len(tracks))} track(s). Check that the fpcalc "
-                "binary is installed and on PATH (or pass --fpcalc-path). "
-                "Use --skip-fingerprint to report metadata candidates instead.",
-                file=sys.stderr,
-            )
-            return 1
+        if not config.skip_fingerprint:
+            error = fingerprint_preflight(tracks, fingerprint_fn)
+            if error:
+                print(error, file=sys.stderr)
+                return 1
 
         try:
             groups = find_duplicates(
@@ -95,20 +84,3 @@ def run(args: argparse.Namespace) -> int:
     print(f"wrote {csv_path}")
     print(f"wrote {json_path}")
     return 0
-
-
-def _fingerprint_works(tracks, fingerprint_fn) -> bool:
-    """True if any of the first few tracks fingerprints successfully.
-
-    A missing binary raises out of `compute` rather than returning None; the
-    pre-flight is exactly the place that difference stops mattering, since both
-    answers are "this run cannot fingerprint anything" and the caller prints one
-    message for them. Swallowing it here is what keeps a missing fpcalc an error
-    message instead of a traceback.
-    """
-    try:
-        return any(
-            fingerprint_fn(t) is not None for t in tracks[:PREFLIGHT_TRACKS]
-        )
-    except RuntimeError:
-        return False
