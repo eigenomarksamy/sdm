@@ -26,8 +26,9 @@ fails costs that tag and nothing else.
 
 The binary layouts still come from `pyrekordbox.anlz`; this module never
 re-describes them, it only chooses which to parse and survives the ones that
-fail. `features/rekordbox/analysis.py` is the cautionary counter-example — it
-hunted for `PSGL` and `PKEY` tags, neither of which exists in the format.
+fail. The hand-rolled parser this replaced in `features/rekordbox/`, since
+deleted, is the cautionary counter-example — it hunted for `PSGL` and `PKEY`
+tags, neither of which exists in the format.
 
 **What is not here, and why.** Musical key is not in ANLZ at all; Rekordbox
 keeps it in the database, so `sdm rekordbox` remains the only source for it.

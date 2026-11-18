@@ -71,7 +71,7 @@ in `sdm web`, and in the browser build. The tree has 110 tracked files, version
 | --- | --- | --- | --- |
 | `catalog` | partial | The export reads `.mp3` only | None: the `.mp3`-only export is deferred ([Phase 1](#deferred-on-purpose)) |
 | `duplicates` | done | Nothing. Baseline: 158 groups from 3,664 files in 9m12s | — |
-| `rekordbox` | partial | Cannot read `export.pdb`. Artists are blank on a run from the local database alone. `analysis.py` is dead code | [F6](#f6), [F4](#f4). Blank artists have no ticket: attaching the USB fills them (CLAUDE.md) |
+| `rekordbox` | partial | Cannot read `export.pdb`. Artists are blank on a run from the local database alone | [F6](#f6). Blank artists have no ticket: attaching the USB fills them (CLAUDE.md) |
 | `analyze` | done | Cue points and waveforms are skipped on purpose | — |
 | `quality` | done | The Rekordbox columns are blank for a USB without the local library behind it, because `export.pdb` is unread | [F6](#f6) |
 | `playlist-diff` | done | No saved login in the CLI or `sdm web`. Spotify only serves playlists you own or collaborate on | [S1](#s1). The second is Spotify's rule |
@@ -258,13 +258,19 @@ the order listed. Each ticket's check is its *done when*.
   reports, exit codes and message are byte-identical to before.
 
 <a id="f4"></a>
-### F4 · Dead ANLZ parser
+### F4 · Dead ANLZ parser · done
 
 - **Where:** `features/rekordbox/analysis.py`.
 - **Change:** delete the file. Nothing imports it, and what it parses is wrong.
 - **Done when:** `grep` finds no reference to it, and `--export-csv` output is
   byte-identical.
 - **Needs:** nothing. **After:** F3.
+- **Result:** done on 2026-11-18. The file is gone, and `git grep` finds its
+  name only in this ticket. CLAUDE.md, `docs/analyze.md` and `core/anlz.py`
+  keep why it was wrong, without its name, so nobody restores it from the
+  history as a reference. On the local library (3,514 tracks), `--export-csv`,
+  `--duplicates-by-name`'s CSV and JSON, `sdm --help` and `sdm rekordbox
+  --help` are byte-identical to the runs before the deletion.
 
 <a id="f5"></a>
 ### F5 · fpcalc cannot fingerprint a file whose name contains a lone surrogate
@@ -917,6 +923,9 @@ Every item in it has a home:
 
 ## Log
 
+- **2026-11-18 · F4** · Done: the dead ANLZ parser in `features/rekordbox/` is
+  deleted. `core/anlz.py` is the only ANLZ reader, and `rekordbox`'s output is
+  unchanged.
 - **2026-11-18 · DOC1, SCM1** · Added, in two new lanes, at the owner's
   request: sdm's adoption of the ecosystem's document standard and SCM
   strategy, which are designed in `meta-eigenomar`. Each needs its standard,

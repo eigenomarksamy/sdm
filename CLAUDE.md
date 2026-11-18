@@ -540,13 +540,14 @@ output goes only to `--output-dir` or `--export-csv`. Preserve this.
   shared with `sdm duplicates`, so a change there affects both. This feature
   supplies the track list and the config (BPM and key required, because a
   Rekordbox library has them).
-- `analysis.py` — hand-rolled binary parser for `USBANLZ` files. **Not imported
-  anywhere, superseded by `core/anlz.py`, and wrong.** It searches for `PSGL` and
-  `PKEY` tags; neither exists in the ANLZ format (the real tags are `PPTH`,
-  `PQTZ`, `PQT2`, `PVBR`, `PCOB`, `PCO2`, `PWAV`/`PWV2`–`PWV7`, `PWVC`, `PSSI`),
-  and its BPM extractor brute-forces byte offsets until a float lands between 40
-  and 200. Do not treat it as a reference for the format or wire it in — use
-  `core/anlz.py`. It is a deletion candidate.
+- **This feature reads no ANLZ.** `core/anlz.py` is the only ANLZ reader. An
+  older hand-rolled one sat in this package, unimported, until it was deleted
+  (F4, 2026-11-18). It was wrong, not just superseded: it searched for
+  `PSGL` and `PKEY` tags, neither of which exists in the ANLZ format (the real
+  tags are `PPTH`, `PQTZ`, `PQT2`, `PVBR`, `PCOB`, `PCO2`,
+  `PWAV`/`PWV2`–`PWV7`, `PWVC`, `PSSI`), and brute-forced byte offsets until a
+  float landed between 40 and 200 for its BPM. Do not restore it from the
+  history as a reference for the format.
 
 Note `_artist_name_v6` returns `""` when the local database has no linked
 artist row, which is common — so a local-DB-only export has blank artists and

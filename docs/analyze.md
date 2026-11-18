@@ -159,10 +159,11 @@ Relaxing a constant means giving up the check it was performing, so
 `_looks_like_a_grid` earns the result back before it is trusted. Across the whole
 library no beat grid — recovered or not — has two beats at the same timestamp.
 
-## A note on `features/rekordbox/analysis.py`
+## A note on the parser this one replaced
 
-That module predates this one and is **wrong, not merely superseded**. It
-searches for `PSGL` and `PKEY` tags; neither exists in the ANLZ format. Its BPM
-extractor brute-forces byte offsets until a float lands between 40 and 200. It is
-imported by nothing. Do not take it as a reference for the format — this feature
-is the reference.
+A hand-rolled ANLZ parser in `features/rekordbox/` predated this feature and was
+deleted on 2026-11-18. It was **wrong, not merely superseded**: it searched for `PSGL` and
+`PKEY` tags, neither of which exists in the ANLZ format, and its BPM extractor
+brute-forced byte offsets until a float landed between 40 and 200. Nothing
+imported it. Do not restore it from the history as a reference for the format —
+this feature is the reference.

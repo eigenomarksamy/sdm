@@ -84,7 +84,6 @@ parts.
 | | Duplicates by name | Title and artist alone, so it covers every track and needs no analysis | `--duplicates-by-name` | partial — blank artists on a local-DB-only run; attaching the USB fills them |
 | | Duplicates by fingerprint | The detector `duplicates` uses, with BPM and key required | Tolerance and threshold flags, `--fpcalc-path`, `--no-fetch-fpcalc` | done — borrows `fpcalc` when none is installed, and pre-flights it, as `duplicates` does |
 | | Reading the exported database | `export.pdb` / `exportLibrary.db` off the USB | — | planned — encrypted DeviceSQL, skipped |
-| | `analysis.py` | An older hand-rolled ANLZ parser | — | stub — unimported and wrong; superseded by `core/anlz.py`. Deletion candidate |
 | | Playlists | Reading and managing them | — | planned |
 | `analyze` | *(the command)* | Reads **Rekordbox's own analysis** off a Pioneer USB — what Rekordbox *worked out*, not what the library contains. Needs no install and no database. **Read-only** | A USB path, or a `PIONEER/USBANLZ` directory | done |
 | | Beat grid | Every beat, plus grid BPM, first downbeat and whether the tempo varies | The `.DAT`/`.EXT` files beside each track | done — 3,655 of 3,665, incl. 119 files pyrekordbox rejects outright |
