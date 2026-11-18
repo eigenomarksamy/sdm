@@ -1,5 +1,10 @@
 # sdm
 
+> **sdm continues as [selecta](https://github.com/eigenomarksamy/selecta).**
+> This repository is no longer maintained. The toolchain, its open issues and
+> the browser build, now at [selecta.eigenomar.com](https://selecta.eigenomar.com),
+> continue there. The deprecated downloader, `sdm download`, is not carried over.
+
 A personal music-library toolchain for a DJ workflow, behind one command.
 
 It covers a single pipeline — *catalog, reconcile, verify* — split into isolated
