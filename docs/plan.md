@@ -29,6 +29,8 @@ does.
 | R | Phase 6: `dig`, records not yet in the library |
 | X | Phase 7: export to Traktor and Serato |
 | W | Outside the phases: small changes to the page |
+| DOC | Outside the phases: the product's documents, vision, architecture, design, testing strategy, and verification and validation |
+| SCM | Outside the phases: source control and delivery, CI, branching, protection, releases and versioning |
 | EO | Ecosystem onboarding |
 | D | Open decisions. These are not tickets |
 
@@ -47,8 +49,8 @@ heading ends in *done*, and the [log](#log) records what the work found.
 
 **Priority.** The dependency diagram puts the phases in three columns, which
 map onto the Project's priorities: Phases 0 and 1 (*now*) are P1, Phases 2 and
-3 (*foundations*) are P2, and Phases 4–7 (*features*) are P3. W1 and the
-onboarding tickets are P2. A priority set in the Project overrides this.
+3 (*foundations*) are P2, and Phases 4–7 (*features*) are P3. W1, the
+onboarding tickets, DOC1 and SCM1 are P2. A priority set in the Project overrides this.
 
 **Adding work.** A new ticket takes the next number in its lane, and an id is
 never reused or renumbered. A split ticket keeps its number and adds a letter
@@ -615,6 +617,50 @@ One small change needs none of the phases, so it can land at any time.
   opens eigenomar.com in a new tab while jobs and reports stay in place.
 - **Needs:** nothing.
 
+## Ecosystem standards
+
+The ecosystem's contract, in `meta-eigenomar`, is adding two standards that
+every repository adopts: the documents each one keeps, and how each one
+manages its source and delivers it. DOC1 and SCM1 adopt them here, each once
+its standard is designed, and until then their issues stay in the backlog.
+Like W1, they are outside both tracks.
+
+<a id="doc1"></a>
+### DOC1 · The product's documents
+
+- **Change:** write or gather sdm's product vision, architecture, design,
+  testing strategy, and verification and validation (V&V) documents, in the
+  shape the ecosystem's document standard sets. Where a file or section
+  already covers one, name it rather than copy it. Today the README says what
+  each command does, `CLAUDE.md` how it works, with its two architectural
+  rules and its layout, and `docs/rekordbox.md` and `docs/analyze.md` the two
+  formats it reads. [Rules every phase keeps](#rules-every-phase-keeps) and
+  this plan's opening are the nearest thing to a vision. Phase 0's checks and
+  [H1](#h1)'s harness are the verification and the testing strategy as they
+  are planned, so the documents name them rather than restate them.
+- **Done when:** each of the five documents exists, or names the file or
+  section that holds it, and follows the standard's outline. `project.yaml`
+  names them under the standard's keys, and the ecosystem's validator passes.
+  Nothing in them is confidential, since this repository is public.
+- **Needs:** the ecosystem's document standard (`meta-eigenomar` ST1).
+
+<a id="scm1"></a>
+### SCM1 · The ecosystem's SCM strategy
+
+- **Change:** adopt the ecosystem's SCM strategy through its adoption
+  checklist: CI, branching, protection of `main`, versioning and releases, the
+  health report and dependency updates. Today sdm has no CI, and this plan
+  accepts the gap ([Linux and other portability notes](#linux-and-other-portability-notes)):
+  CI could install and build, but [H1](#h1) needs the reference library, which
+  CI cannot have. Cloudflare's build deploys every push to `main`, there are
+  no releases, and the audio tools are built on Linux or WSL and committed with
+  their `stamp.json`.
+- **Done when:** every item on the checklist is applied here, or recorded here
+  as an exception the strategy allows, with its reason. `project.yaml`'s
+  `delivery` and `CLAUDE.md` say what runs, any workflow passes on `main`, and
+  the ecosystem's validator passes.
+- **Needs:** the ecosystem's SCM strategy (`meta-eigenomar` ST2).
+
 ## Sequence and dependencies
 
 The harness gates the writers, and the state root gates the network features.
@@ -871,6 +917,10 @@ Every item in it has a home:
 
 ## Log
 
+- **2026-11-18 · DOC1, SCM1** · Added, in two new lanes, at the owner's
+  request: sdm's adoption of the ecosystem's document standard and SCM
+  strategy, which are designed in `meta-eigenomar`. Each needs its standard,
+  so its issue waits in the backlog.
 - **2026-11-14 · F3** · Done: `rekordbox` borrows fpcalc when none is
   installed, and pre-flights it, through the pre-flight `duplicates` used, now
   in `core.duplicates`. It also gained `--no-fetch-fpcalc`.
